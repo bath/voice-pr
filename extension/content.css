@@ -55,7 +55,9 @@
   font-size: 12px;
   border-bottom: 1px solid var(--vp-border);
 }
-.vp-looking { padding: 6px 12px 0; color: var(--vp-accent); font-size: 12px; min-height: 14px; }
+.vp-looking { padding: 6px 12px 0; color: var(--vp-accent); font-size: 12px; min-height: 16px; }
+.vp-interim { color: var(--vp-text); font-style: italic; }
+.vp-dim { color: var(--vp-muted); }
 .vp-warn { color: var(--vp-warn); }
 
 .vp-segments {

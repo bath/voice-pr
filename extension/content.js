@@ -61,8 +61,8 @@
         <input id="vp-type" type="text" placeholder="…or type a comment (uses what you're looking at)" />
       </div>
       <div class="vp-actions">
-        <button id="vp-toggle" class="vp-rec">● Start recording</button>
-        <button id="vp-send" class="vp-send" disabled>Hand to orchestrator →</button>
+        <button id="vp-toggle" class="vp-rec">❚❚ Pause</button>
+        <button id="vp-send" class="vp-send" disabled>Stop &amp; dispatch →</button>
       </div>
       <div id="vp-status" class="vp-status" hidden></div>
     </div>`;
@@ -79,10 +79,12 @@
     sendBtn = $("#vp-send"),
     statusEl = $("#vp-status");
 
+  // One click = open + start recording immediately (context loads in parallel).
   pill.addEventListener("click", () => {
     panel.hidden = false;
     pill.hidden = true;
     loadContext();
+    start();
   });
   $("#vp-close").addEventListener("click", () => {
     if (recording) stop();
@@ -129,37 +131,51 @@
 
   // ---------- speech ----------------------------------------------------------
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let liveInterim = "";
+  function paintLooking() {
+    if (!recording) return (lookingEl.textContent = "");
+    lookingEl.innerHTML = liveInterim
+      ? `<span class="vp-interim">“${escapeHtml(liveInterim)}”</span>`
+      : `<span class="vp-dim">🔴 listening · looking at ${escapeHtml(fmtAnchor(anchorNow()))}</span>`;
+  }
   function start() {
+    if (recording) return;
     recording = true;
-    toggleBtn.textContent = "■ Stop recording";
+    liveInterim = "";
+    toggleBtn.textContent = "❚❚ Pause";
     toggleBtn.classList.add("vp-recording");
-    anchorTimer = setInterval(() => {
-      lookingEl.textContent = recording ? `looking at ${fmtAnchor(anchorNow())}` : "";
-    }, 400);
+    paintLooking();
+    anchorTimer = setInterval(paintLooking, 350);
     if (SR) {
       recog = new SR();
       recog.continuous = true;
-      recog.interimResults = false;
+      recog.interimResults = true; // live text as you speak → feels responsive
       recog.lang = "en-US";
       recog.onresult = (e) => {
-        for (let i = e.resultIndex; i < e.results.length; i++)
-          if (e.results[i].isFinal) addSegment(e.results[i][0].transcript);
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const r = e.results[i];
+          if (r.isFinal) addSegment(r[0].transcript);
+          else interim += r[0].transcript;
+        }
+        liveInterim = interim;
       };
       recog.onerror = (ev) => {
         if (ev.error === "not-allowed" || ev.error === "service-not-allowed")
-          lookingEl.innerHTML = `<span class="vp-warn">mic blocked on this page — type comments instead</span>`;
+          lookingEl.innerHTML = `<span class="vp-warn">mic blocked — click the 🔒 in the address bar to allow the mic, or just type comments</span>`;
       };
       recog.onend = () => {
         if (recording) try { recog.start(); } catch {}
       };
       try { recog.start(); } catch {}
     } else {
-      lookingEl.innerHTML = `<span class="vp-warn">no Web Speech API — type your comments</span>`;
+      lookingEl.innerHTML = `<span class="vp-warn">no Web Speech API in this browser — type your comments</span>`;
     }
   }
   function stop() {
     recording = false;
-    toggleBtn.textContent = "● Start recording";
+    liveInterim = "";
+    toggleBtn.textContent = "● Resume";
     toggleBtn.classList.remove("vp-recording");
     clearInterval(anchorTimer);
     lookingEl.textContent = "";
