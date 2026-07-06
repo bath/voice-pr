@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node server.js",
     "demo": "bash scripts/setup-demo-pr.sh",
+    "test": "node --test",
     "check:extension": "node scripts/package-extension.mjs --check",
     "package:extension": "node scripts/package-extension.mjs"
   },
