@@ -26,6 +26,18 @@
         />
       </label>
 
+      <fieldset class="mode">
+        <legend>Mode</legend>
+        <label>
+          <input type="radio" name="mode" value="author" checked />
+          <span><strong>Author mode</strong> commits fixes to my PR branch</span>
+        </label>
+        <label>
+          <input type="radio" name="mode" value="reviewer" />
+          <span><strong>Reviewer mode</strong> posts review comments only</span>
+        </label>
+      </fieldset>
+
       <section class="recorder">
         <button id="talk" class="talk" aria-pressed="false">
           <span class="dot"></span>
@@ -53,7 +65,7 @@
           <span class="spinner" id="spinner"></span>
           <span id="status-line">working…</span>
         </div>
-        <p class="reassure">
+        <p id="reassure" class="reassure">
           This runs asynchronously — you can close this tab. Your PR will have
           commits and comments in a few minutes.
         </p>

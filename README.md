@@ -61,15 +61,20 @@ node server.js                      # → http://localhost:4100
    manual step is unavoidable.)
 3. Open any PR's **Files changed** tab on GitHub. A **🎙️ Review with voice**
    pill appears bottom-right.
-4. Click it → **Start recording** → scroll and talk. Each comment shows the
-   `file:line` it anchored to. (First time, Chrome asks for mic permission on
-   github.com. No mic / not Chrome? Type comments into the box instead — same
-   result.)
-5. **Hand to orchestrator →**. Close the tab if you want; the PR updates in a
-   few minutes. The panel also streams live progress and links the result.
+4. Choose a mode:
+   - **Author mode** commits fixes back to your own PR branch.
+   - **Reviewer mode** posts GitHub review comments only. It does not clone,
+     dispatch authoring work, commit, or push.
+5. Click **Record** → scroll and talk. Each comment shows the `file:line` it
+   anchored to. (First time, Chrome asks for mic permission on github.com. No
+   mic / not Chrome? Type comments into the box instead — same result.)
+6. Click the mode-specific dispatch button. Close the tab if you want; the
+   server-side work continues and the panel streams live progress when open.
 
-The extension always routes through the **orchestrator** backend, so the bridge
-must be able to reach your pogo container (see below).
+In author mode, the extension routes through the **orchestrator** backend, so
+the bridge must be able to reach your pogo container (see below). In reviewer
+mode, the bridge posts GitHub comments directly and never dispatches authoring
+work.
 
 ## Speech-to-text: local Whisper (private, accurate)
 
@@ -107,9 +112,11 @@ node server.js            # → http://localhost:4100  (set PORT to change)
 ```
 
 Open it in Chrome, paste your PR URL, hold **Space** (or click) and talk, edit
-the transcript if a word came out wrong, then hit **Address my feedback →**.
-Progress streams live, but the whole point is you can close the tab — it runs
-asynchronously and the PR updates in a few minutes.
+the transcript if a word came out wrong, choose **Author mode** or **Reviewer
+mode**, then dispatch. Progress streams live, but the whole point is you can
+close the tab — it runs asynchronously and the PR updates in a few minutes.
+Reviewer mode on the localhost page has no diff viewport anchors, so it posts
+one plain PR conversation comment containing the review transcript.
 
 ### Try it against a throwaway PR
 

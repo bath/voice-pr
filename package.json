@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
+    "test": "node --test",
     "demo": "bash scripts/setup-demo-pr.sh"
   },
   "dependencies": {},

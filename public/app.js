@@ -11,6 +11,8 @@ const spinner = $("spinner");
 const logEl = $("log");
 const resultEl = $("result");
 const listeningEl = $("listening");
+const reassureEl = $("reassure");
+const modeInputs = [...document.querySelectorAll('input[name="mode"]')];
 
 // --- persist the PR field -------------------------------------------------
 prInput.value = localStorage.getItem("voice-pr:pr") || "";
@@ -94,12 +96,24 @@ function refreshFire() {
   fireBtn.disabled = !(prInput.value.trim() && transcriptEl.value.trim());
 }
 prInput.addEventListener("input", refreshFire);
+function selectedMode() {
+  return modeInputs.find((m) => m.checked)?.value || "author";
+}
+function refreshModeCopy() {
+  const reviewer = selectedMode() === "reviewer";
+  fireBtn.textContent = reviewer ? "Post review comments →" : "Address my feedback →";
+  reassureEl.textContent = reviewer
+    ? "Reviewer mode posts GitHub comments only. It will not clone, commit, push, or dispatch authoring work."
+    : "This runs asynchronously — you can close this tab. Your PR will have commits and comments in a few minutes.";
+}
+for (const input of modeInputs) input.addEventListener("change", refreshModeCopy);
 
 // --- fire the batch -------------------------------------------------------
 fireBtn.addEventListener("click", async () => {
   stopRecording();
   const prRef = prInput.value.trim();
   const transcript = transcriptEl.value.trim();
+  const mode = selectedMode();
   if (!prRef || !transcript) return;
 
   fireBtn.disabled = true;
@@ -114,7 +128,7 @@ fireBtn.addEventListener("click", async () => {
     const res = await fetch("/api/batch", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prRef, transcript }),
+      body: JSON.stringify({ prRef, transcript, mode }),
     });
     await readStream(res.body, handleEvent);
   } catch (e) {
@@ -151,6 +165,9 @@ const STAGE_TEXT = {
   pushing: (d) => `pushing commits to ${d.branch}…`,
   commenting: (d) => `commenting on ${d.file}:${d.line}…`,
   clarifying: (d) => `noting ${d.count} unclear item(s) for you…`,
+  mode: (d) => `${d.mode === "reviewer" ? "reviewer" : "author"} mode selected`,
+  "review-commenting": (d) =>
+    d.file ? `posting review comment on ${d.file}:${d.line}…` : `posting ${d.count} review comment(s)…`,
   // orchestrator backend
   "project-ready": (d) => `repo registered with the orchestrator (${d.path})`,
   "work-filed": (d) => `filed work item ${d.id} into the orchestrator`,
@@ -193,6 +210,7 @@ function renderResult(r) {
   const esc = (s) =>
     (s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
+  if (r.mode === "reviewer" || r.backend === "reviewer") return renderReviewerResult(r, esc);
   if (r.backend === "orchestrator") return renderOrchestratorResult(r, esc);
 
   setStatus(`done in a couple minutes — ${r.summary || "handled your feedback"}`);
@@ -233,6 +251,33 @@ function renderResult(r) {
   resultEl.hidden = false;
 }
 
+function renderReviewerResult(r, esc) {
+  setStatus(r.summary || "review comments posted");
+  const comments = r.reviewComments || [];
+  let html = `<h2>✅ Review comments posted</h2>`;
+  html += `<p class="summary"><a href="${r.pr.url}" target="_blank">${esc(
+    r.pr.title
+  )}</a> — ${comments.length} comment(s), 0 commits</p>`;
+
+  if (comments.length) {
+    html += `<div class="section-label">Comments only</div><ul>`;
+    for (const c of comments) {
+      const loc = c.file ? `${c.file}${c.line ? `:${c.line}` : ""}` : "PR conversation";
+      const link = c.commentUrl
+        ? ` · <a href="${c.commentUrl}" target="_blank">comment</a>`
+        : "";
+      html += `<li class="card done">
+        <div class="title">${esc(loc)}${link}</div>
+        <div class="rationale">${esc(c.text)}</div>
+      </li>`;
+    }
+    html += `</ul>`;
+  }
+
+  resultEl.innerHTML = html;
+  resultEl.hidden = false;
+}
+
 function renderOrchestratorResult(r, esc) {
   const ok = r.status === "done";
   const icon = ok ? "✅" : r.status === "failed" ? "⚠️" : "⏳";
@@ -263,4 +308,5 @@ function renderOrchestratorResult(r, esc) {
   resultEl.hidden = false;
 }
 
+refreshModeCopy();
 refreshFire();

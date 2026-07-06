@@ -1,7 +1,7 @@
 // voice-pr content script — lives on a GitHub PR page.
 // Press record, scroll the diff, and talk. Each spoken chunk is anchored to the
 // file+line centered in your viewport when you said it, then the whole session
-// is handed to the local bridge → orchestrator.
+// is handed to the local bridge for author-mode commits or reviewer comments.
 (function () {
   const BRIDGE = "http://localhost:4100";
   const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
@@ -222,11 +222,15 @@
         </span>
       </div>
       <div id="vp-context" class="vp-context">PR #${m[3]}</div>
+      <div class="vp-mode" role="radiogroup" aria-label="voice-pr mode">
+        <label><input type="radio" name="vp-mode" value="author" checked><span><strong>Author</strong> commit fixes</span></label>
+        <label><input type="radio" name="vp-mode" value="reviewer"><span><strong>Reviewer</strong> comments only</span></label>
+      </div>
       <div id="vp-looking" class="vp-looking"></div>
       <div id="vp-debug" class="vp-debug" hidden></div>
       <div class="vp-actions">
         <button id="vp-toggle" class="vp-rec">● Record</button>
-        <button id="vp-send" class="vp-send" disabled>Dispatch →</button>
+        <button id="vp-send" class="vp-send" disabled>Commit changes →</button>
       </div>
       <div id="vp-status" class="vp-status" hidden></div>
     </div>`;
@@ -267,6 +271,23 @@
     toggleBtn = $("#vp-toggle"),
     sendBtn = $("#vp-send"),
     statusEl = $("#vp-status");
+  const modeInputs = [...root.querySelectorAll('input[name="vp-mode"]')];
+
+  const savedMode = localStorage.getItem("voicepr:mode");
+  if (savedMode === "reviewer") modeInputs.find((m) => m.value === "reviewer").checked = true;
+  function currentMode() {
+    return modeInputs.find((m) => m.checked)?.value || "author";
+  }
+  function applyModeCopy() {
+    sendBtn.textContent = currentMode() === "reviewer" ? "Post comments →" : "Commit changes →";
+  }
+  for (const input of modeInputs) {
+    input.addEventListener("change", () => {
+      localStorage.setItem("voicepr:mode", currentMode());
+      applyModeCopy();
+    });
+  }
+  applyModeCopy();
 
   // Tear down all in-flight state and return the panel to a clean, fresh-session
   // state. Called on every open so reopening after a send/stop is never janky.
@@ -300,7 +321,7 @@
     debugEl.innerHTML = "";
     ctxEl.textContent = `PR #${m[3]}`;
     sendBtn.disabled = false;
-    sendBtn.textContent = "Dispatch →";
+    applyModeCopy();
     toggleBtn.disabled = false;
     toggleBtn.textContent = "● Record";
     toggleBtn.classList.remove("vp-recording");
@@ -507,8 +528,8 @@
 
   // ---------- dispatch: click and be on your way ------------------------------
   // Never blocks. Stops the mic, then hands the audio + typed comments to the
-  // bridge, which transcribes AND dispatches server-side — so you can close the
-  // tab immediately; the work completes without this page.
+  // bridge, which transcribes AND runs the selected mode server-side — so you can
+  // close the tab immediately; the work completes without this page.
   sendBtn.addEventListener("click", async () => {
     if (dispatched) return;
     dispatched = true;
@@ -524,7 +545,12 @@
     sendBtn.disabled = true;
     sendBtn.textContent = "Sent ✓";
     statusEl.hidden = false;
-    statusEl.innerHTML = `<div class="vp-result ok">✅ On it — handed to the orchestrator.</div>
+    const mode = currentMode();
+    statusEl.innerHTML =
+      mode === "reviewer"
+        ? `<div class="vp-result ok">✅ Posting review comments.</div>
+      <div class="vp-reassure">You can close this tab. Reviewer mode posts comments only; it will not commit or push.</div>`
+        : `<div class="vp-result ok">✅ On it — handed to the orchestrator.</div>
       <div class="vp-reassure">You can close this tab. Transcription + the work run on the server; the PR updates in a few minutes.</div>`;
     const audio = await stopAndGetAudio();
     try {
@@ -534,7 +560,7 @@
         if (ev.stage === "_end") return port.disconnect();
         onEvent(ev);
       });
-      port.postMessage({ prRef: prUrl, sessionId, typedSegments: segments, timeline, ...(audio || {}) });
+      port.postMessage({ prRef: prUrl, sessionId, mode, typedSegments: segments, timeline, ...(audio || {}) });
     } catch (e) {
       line(`error: ${e.message}`, true);
     }
@@ -548,6 +574,9 @@
       `context: ${d.segments} comments${d.jiraKey ? `, ticket ${d.jiraKey}` : ""}${
         d.checksSummary ? `, ${d.checksSummary}` : ""
       }`,
+    mode: (d) => `${d.mode === "reviewer" ? "reviewer" : "author"} mode selected`,
+    "review-commenting": (d) =>
+      d.file ? `posting review comment on ${d.file}:${d.line}…` : `posting ${d.count} review comment(s)…`,
     "project-ready": () => `repo registered with the orchestrator`,
     "work-filed": (d) => `filed work item ${d.id}`,
     dispatching: (d) => `nudging the mayor to dispatch ${d.id}…`,
@@ -565,6 +594,7 @@
     line(f ? f(detail || {}) : stage);
   }
   function done(r) {
+    if (r.mode === "reviewer" || r.backend === "reviewer") return doneReviewer(r);
     const ok = r.status === "done";
     statusEl.innerHTML = `
       <div class="vp-result ${ok ? "ok" : "warn"}">
@@ -579,6 +609,25 @@
           : ""
       }
       <button id="vp-reload" class="vp-send">Refresh PR to see commits</button>`;
+    const rl = statusEl.querySelector("#vp-reload");
+    if (rl) rl.addEventListener("click", () => location.reload());
+  }
+  function doneReviewer(r) {
+    const comments = r.reviewComments || [];
+    const links = comments
+      .filter((c) => c.commentUrl)
+      .map(
+        (c, i) =>
+          `<a class="vp-link" href="${c.commentUrl}" target="_blank">comment ${i + 1}${
+            c.file ? ` · ${escapeHtml(c.file)}${c.line ? `:${c.line}` : ""}` : ""
+          }</a>`
+      )
+      .join("");
+    statusEl.innerHTML = `
+      <div class="vp-result ok">✅ ${escapeHtml(r.summary || "Review comments posted. No commits were made.")}</div>
+      <div class="vp-line">${comments.length} comment(s) · 0 commits</div>
+      ${links}
+      <button id="vp-reload" class="vp-send">Refresh PR to see comments</button>`;
     const rl = statusEl.querySelector("#vp-reload");
     if (rl) rl.addEventListener("click", () => location.reload());
   }

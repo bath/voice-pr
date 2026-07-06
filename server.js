@@ -53,12 +53,20 @@ const server = createServer(async (req, res) => {
 });
 
 // Combined, fire-and-forget path for the extension: transcribe the recording
-// AND dispatch to the orchestrator, entirely server-side, streaming progress.
+// AND hand it to the selected mode, entirely server-side, streaming progress.
 // Completes even if the client closes the tab.
 async function handleDispatch(req, res) {
   const body = await readBody(req);
   const input = JSON.parse(body || "{}");
-  const { prRef, sessionId, audioB64, ext = "webm", timeline = [], typedSegments = [] } = input;
+  const {
+    prRef,
+    sessionId,
+    audioB64,
+    ext = "webm",
+    timeline = [],
+    typedSegments = [],
+    mode,
+  } = input;
 
   res.writeHead(200, {
     "content-type": "application/x-ndjson",
@@ -96,7 +104,7 @@ async function handleDispatch(req, res) {
       segs = [...anchored, ...segs];
     }
     if (!segs.length) throw new Error("nothing captured — no speech and no typed comments");
-    result = await runSession({ prRef, segments: segs }, send);
+    result = await runSession({ prRef, segments: segs, mode }, send);
     send("result", result);
   } catch (e) {
     err = e.message;
@@ -107,6 +115,7 @@ async function handleDispatch(req, res) {
       await saveJson(sessionId, "session.json", {
         at: new Date().toISOString(),
         prRef,
+        mode,
         segments: segs,
         transcript: segs.map((s) => s.text).join(" "),
         result,
@@ -214,6 +223,7 @@ async function handleStream(req, res, runner) {
       await saveJson(input.sessionId, "session.json", {
         at: new Date().toISOString(),
         prRef: input.prRef,
+        mode: input.mode,
         segments: input.segments || null,
         transcript: (input.segments || []).map((s) => s.text).join(" "),
         result,
