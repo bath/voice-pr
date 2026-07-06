@@ -16,6 +16,18 @@
 }
 #voicepr-root * { box-sizing: border-box; }
 
+/* the "laser" line-highlight under the cursor while recording */
+#vp-laser {
+  position: fixed;
+  z-index: 2147482999;
+  pointer-events: none;
+  background: rgba(76, 141, 255, 0.14);
+  border-left: 3px solid #ff5c5c;
+  box-shadow: inset 0 0 0 1px rgba(76, 141, 255, 0.35);
+  border-radius: 2px;
+  transition: top 0.04s linear, left 0.04s linear, width 0.04s linear;
+}
+
 .vp-pill {
   background: var(--vp-accent);
   color: #fff;

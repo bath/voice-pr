@@ -23,9 +23,9 @@
     dispatched = false,
     stopResolve = null,
     activePort = null;
-  function pushTimeline(src = "scroll") {
+  function pushTimeline(src = "scroll", anchor) {
     if (!recording) return;
-    const a = anchorNow();
+    const a = anchor || anchorNow();
     timeline.push({ t: Date.now() - recStart, src, ...a });
     debugLine(a, src);
   }
@@ -85,6 +85,55 @@
     pushTimeline("click");
   });
 
+  // The code token/identifier directly under a screen point (the "laser dot").
+  function tokenAt(x, y) {
+    const r = document.caretRangeFromPoint?.(x, y);
+    const node = r?.startContainer;
+    if (!node || node.nodeType !== 3) return null;
+    const text = node.textContent || "";
+    const isW = (c) => /[\w$.]/.test(c || "");
+    let i = r.startOffset;
+    if (!isW(text[i]) && !isW(text[i - 1])) return null;
+    let a = i, b = i;
+    while (a > 0 && isW(text[a - 1])) a--;
+    while (b < text.length && isW(text[b])) b++;
+    const tok = text.slice(a, b).trim().replace(/^\.+|\.+$/g, "");
+    return tok && tok.length <= 60 ? tok : null;
+  }
+  // Full attention datum at a screen point: file, line, token, coords.
+  function anchorAtPoint(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const file = fileOf(el);
+    if (!file) return null;
+    return { file, line: lineOf(el), token: tokenAt(x, y) || null, x: Math.round(x), y: Math.round(y) };
+  }
+
+  // Mouse-as-laser: while recording, continuously capture where the pointer is
+  // over the diff — movement (on change), dwell (lingering = strong attention),
+  // and the token under it. Throttled; only logs when the target changes.
+  let lastHover = null,
+    hoverKey = "",
+    moveThrottle = 0,
+    dwellTimer = null;
+  document.addEventListener("mousemove", (e) => {
+    if (!recording) return;
+    const now = Date.now();
+    laserPaint(e.clientX, e.clientY);
+    if (now - moveThrottle < 120) return;
+    moveThrottle = now;
+    const a = anchorAtPoint(e.clientX, e.clientY);
+    if (!a) return;
+    lastHover = { ...a, ts: now };
+    const key = `${a.file}:${a.line}:${a.token || ""}`;
+    if (key === hoverKey) return;
+    hoverKey = key;
+    pushTimeline("move", a);
+    clearTimeout(dwellTimer);
+    dwellTimer = setTimeout(() => {
+      if (recording && hoverKey === key) pushTimeline("dwell", a); // lingered here
+    }, 700);
+  });
+
   // Viewport-center fallback (what's on screen if you didn't select/click).
   function anchorViewport() {
     const cy = window.innerHeight / 2;
@@ -104,19 +153,24 @@
     return { file, line: Number.isFinite(line) ? line : null };
   }
 
-  // Priority: live selection → recent selection → recent click → viewport.
+  // A live text selection always wins; otherwise take the MOST RECENT signal
+  // among selection / click / pointer-hover (pointing counts as attention).
   function anchorNow() {
     const live = selAnchor();
     if (live) return live;
-    const fresh = (x) => x && Date.now() - x.ts < 12000;
-    if (fresh(lastSel)) return { file: lastSel.file, line: lastSel.line, endLine: lastSel.endLine, snippet: lastSel.snippet };
-    if (fresh(lastClick)) return { file: lastClick.file, line: lastClick.line };
+    const cands = [lastSel, lastClick, lastHover].filter(
+      (x) => x && Date.now() - x.ts < (x === lastHover ? 4000 : 12000)
+    );
+    if (cands.length) {
+      const c = cands.sort((a, b) => b.ts - a.ts)[0];
+      return { file: c.file, line: c.line, endLine: c.endLine, snippet: c.snippet, token: c.token };
+    }
     return anchorViewport();
   }
   function fmtAnchor(a) {
-    if (!a || !a.file) return "no selection/line — will infer from words";
+    if (!a || !a.file) return "no target — will infer from words";
     const range = a.endLine && a.endLine !== a.line ? `${a.line}-${a.endLine}` : a.line || "";
-    return `${a.file}${range ? ":" + range : ""}`;
+    return `${a.file}${range ? ":" + range : ""}${a.token ? ` \`${a.token}\`` : ""}`;
   }
 
   // ---------- UI --------------------------------------------------------------
@@ -142,6 +196,24 @@
       <div id="vp-status" class="vp-status" hidden></div>
     </div>`;
   document.body.appendChild(root);
+
+  // The "laser" — highlights the diff line under the cursor while recording.
+  const laser = document.createElement("div");
+  laser.id = "vp-laser";
+  laser.style.display = "none";
+  document.body.appendChild(laser);
+  function laserPaint(x, y) {
+    const cell = recording && document.elementFromPoint(x, y)?.closest?.("td.blob-code");
+    if (!cell) return void (laser.style.display = "none");
+    const r = cell.getBoundingClientRect();
+    Object.assign(laser.style, {
+      display: "block",
+      top: `${r.top}px`,
+      left: `${r.left}px`,
+      width: `${r.width}px`,
+      height: `${r.height}px`,
+    });
+  }
 
   const $ = (id) => root.querySelector(id);
   const pill = $("#vp-pill"),
@@ -173,6 +245,10 @@
     segments = [];
     lastSel = null;
     lastClick = null;
+    lastHover = null;
+    hoverKey = "";
+    clearTimeout(dwellTimer);
+    laser.style.display = "none";
   }
   function resetUI() {
     statusEl.hidden = true;
@@ -250,7 +326,7 @@
     const secs = Math.floor((Date.now() - recStart) / 1000);
     lookingEl.innerHTML = `<span class="vp-dim">🔴 recording ${Math.floor(secs / 60)}:${String(
       secs % 60
-    ).padStart(2, "0")} · looking at ${escapeHtml(fmtAnchor(anchorNow()))}</span>`;
+    ).padStart(2, "0")} · pointing at ${escapeHtml(fmtAnchor(anchorNow()))}</span>`;
   }
   function mimeType() {
     for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"])
