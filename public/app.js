@@ -152,6 +152,8 @@ const STAGE_TEXT = {
   commenting: (d) => `commenting on ${d.file}:${d.line}…`,
   clarifying: (d) => `noting ${d.count} unclear item(s) for you…`,
   // orchestrator backend
+  "mcp-configured": (d) => `configured container MCP servers (${(d.servers || []).join(", ")})`,
+  "mcp-config-skipped": () => "container MCP config not provided; Jira/Slack context will be skipped",
   "project-ready": (d) => `repo registered with the orchestrator (${d.path})`,
   "work-filed": (d) => `filed work item ${d.id} into the orchestrator`,
   dispatching: (d) => `nudging the mayor to dispatch work item ${d.id}…`,

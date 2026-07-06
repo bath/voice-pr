@@ -9,7 +9,9 @@
   },
   "scripts": {
     "start": "node server.js",
-    "demo": "bash scripts/setup-demo-pr.sh"
+    "demo": "bash scripts/setup-demo-pr.sh",
+    "test": "node --test",
+    "validate:mcp": "node scripts/validate-mcp-config.js"
   },
   "dependencies": {},
   "engines": {

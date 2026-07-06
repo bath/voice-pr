@@ -549,6 +549,8 @@
         d.checksSummary ? `, ${d.checksSummary}` : ""
       }`,
     "project-ready": () => `repo registered with the orchestrator`,
+    "mcp-configured": (d) => `MCP ready (${(d.servers || []).join(", ")})`,
+    "mcp-config-skipped": () => `MCP config missing; ticket/Slack context will be skipped`,
     "work-filed": (d) => `filed work item ${d.id}`,
     dispatching: (d) => `nudging the mayor to dispatch ${d.id}…`,
     "work-status": (d) => `work item ${d.id}: ${d.status}`,

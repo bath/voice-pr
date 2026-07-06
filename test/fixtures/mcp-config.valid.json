@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "slack": {
+      "command": "slack-mcp",
+      "args": []
+    },
+    "atlassian": {
+      "command": "atlassian-mcp",
+      "args": []
+    }
+  }
+}

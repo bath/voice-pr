@@ -180,6 +180,65 @@ file, or `ANTHROPIC_API_KEY`). OAuth tokens expire — if the mayor/polecats log
 (`pogo agent stop mayor`; pogod respawns it). Injecting a real
 `ANTHROPIC_API_KEY` avoids the expiry entirely.
 
+#### Slack + Jira MCP inside `codingagent`
+
+The bridge can prime the running orchestrator container with Slack and
+Atlassian MCP server definitions before it files a work item. This keeps secrets
+out of this repo: operators provide a local JSON config and any required
+credential env/files for their chosen MCP server implementations.
+
+1. Create a local config file that contains both `slack` and `atlassian` server
+   entries in Claude Code's `mcpServers` shape:
+
+   ```json
+   {
+     "mcpServers": {
+       "slack": {
+         "command": "your-slack-mcp-command",
+         "args": [],
+         "env": {
+           "SLACK_BOT_TOKEN": "provided-outside-this-repo",
+           "SLACK_TEAM_ID": "provided-outside-this-repo"
+         }
+       },
+       "atlassian": {
+         "command": "your-atlassian-mcp-command",
+         "args": [],
+         "env": {
+           "ATLASSIAN_SITE_URL": "https://your-site.atlassian.net",
+           "ATLASSIAN_EMAIL": "provided-outside-this-repo",
+           "ATLASSIAN_API_TOKEN": "provided-outside-this-repo"
+         }
+       }
+     }
+   }
+   ```
+
+   The exact command, args, and env names come from the MCP servers you choose.
+   If a command depends on files or binaries outside the base image, mount them
+   into `codingagent` at `docker run` time and point the config at the
+   container path.
+
+2. Validate the shape locally:
+
+   ```bash
+   npm run validate:mcp -- ~/.codingagent/voice-pr-mcp.json
+   ```
+
+3. Start the bridge with the config path:
+
+   ```bash
+   VOICE_PR_BACKEND=orchestrator \
+   VOICE_PR_CONTAINER_MCP_CONFIG=~/.codingagent/voice-pr-mcp.json \
+   node server.js
+   ```
+
+For each orchestrator dispatch, voice-pr validates the file, streams the server
+definitions into the running container over `docker exec -i`, and merges them
+into `/home/pogo/.claude.json` without clobbering existing onboarding/trust
+settings. If `VOICE_PR_CONTAINER_MCP_CONFIG` is unset, the run continues but the
+UI calls out that Jira/Slack context will be skipped.
+
 ## Config
 
 | Env | Default | Meaning |
@@ -191,6 +250,8 @@ file, or `ANTHROPIC_API_KEY`). OAuth tokens expire — if the mayor/polecats log
 | `VOICE_PR_CONTAINER` | `codingagent` | orchestrator container name |
 | `VOICE_PR_WORKSPACE` | `/home/pogo/workspace` | repo checkout root inside the container |
 | `VOICE_PR_DISPATCH_MS` | `720000` | how long to track a work item before returning |
+| `VOICE_PR_CONTAINER_MCP_CONFIG` | unset | host path to a Claude-style JSON config containing `mcpServers.slack` and `mcpServers.atlassian`; when set, voice-pr validates and merges it into the running container before dispatch |
+| `VOICE_PR_CONTAINER_CLAUDE_CONFIG` | `/home/pogo/.claude.json` | container path to merge MCP server definitions into |
 | `VOICE_PR_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
 | `VOICE_PR_WHISPER_MODEL` | `~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin` | GGML model path |
 | `VOICE_PR_ARCHIVE_DIR` | `~/.voice-pr/sessions` | where session fixtures are saved |
