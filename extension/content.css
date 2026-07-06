@@ -78,6 +78,17 @@
   color: var(--vp-muted);
   margin-bottom: 2px;
 }
+.vp-snip {
+  display: block;
+  font: 11px ui-monospace, Menlo, monospace;
+  background: var(--vp-bg);
+  border-left: 2px solid var(--vp-accent);
+  padding: 3px 6px;
+  margin: 2px 0 4px;
+  color: var(--vp-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 
 .vp-add { padding: 8px 12px; }
 .vp-add input {

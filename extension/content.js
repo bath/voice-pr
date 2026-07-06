@@ -15,34 +15,91 @@
   let anchorTimer = null;
 
   // ---------- viewport anchoring ----------------------------------------------
-  // What file+line is centered on screen right now? Targets GitHub's diff DOM;
-  // degrades to {file, null} or {null, null} if it can't resolve (agent infers).
-  function anchorNow() {
+  // Resolve which file the given node lives in (GitHub diff DOM).
+  function fileOf(el) {
+    const f = el && el.closest?.("[data-tagsearch-path], .file, .js-file");
+    if (!f) return null;
+    return (
+      f.getAttribute?.("data-tagsearch-path") ||
+      f.querySelector?.(".file-header")?.getAttribute("data-path") ||
+      f.querySelector?.("[data-path]")?.getAttribute("data-path") ||
+      null
+    );
+  }
+  // The new-file line number for a DOM node's diff row (right side of the diff).
+  function lineOf(el) {
+    const row = el && (el.nodeType === 3 ? el.parentElement : el)?.closest?.("tr");
+    if (!row) return null;
+    const nums = [...row.querySelectorAll("td.blob-num[data-line-number]")];
+    const n = nums.length ? parseInt(nums[nums.length - 1].getAttribute("data-line-number"), 10) : NaN;
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // Track what the user last selected / clicked in the diff — richer than the
+  // viewport, and what people actually do ("highlight this, then say what's wrong").
+  let lastSel = null,
+    lastClick = null;
+  function selAnchor() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return null;
+    const text = sel.toString().trim();
+    if (!text) return null;
+    const startEl = sel.anchorNode?.nodeType === 3 ? sel.anchorNode.parentElement : sel.anchorNode;
+    const file = fileOf(startEl);
+    if (!file) return null;
+    const a = lineOf(sel.anchorNode),
+      b = lineOf(sel.focusNode);
+    const lines = [a, b].filter((x) => x != null);
+    return {
+      file,
+      line: lines.length ? Math.min(...lines) : null,
+      endLine: lines.length ? Math.max(...lines) : null,
+      snippet: text.slice(0, 400),
+    };
+  }
+  document.addEventListener("mouseup", () => {
+    const s = selAnchor();
+    if (s) lastSel = { ...s, ts: Date.now() };
+  });
+  document.addEventListener("mousedown", (e) => {
+    const file = fileOf(e.target),
+      line = lineOf(e.target);
+    if (file && line != null) lastClick = { file, line, ts: Date.now() };
+  });
+
+  // Viewport-center fallback (what's on screen if you didn't select/click).
+  function anchorViewport() {
     const cy = window.innerHeight / 2;
-    let el = document.elementFromPoint(Math.min(window.innerWidth / 2, 400), cy);
-    const fileEl = el && el.closest("[data-tagsearch-path], .file, .js-file, copy-path");
-    if (!fileEl) return { file: null, line: null };
-    const path =
-      fileEl.getAttribute && fileEl.getAttribute("data-tagsearch-path")
-        ? fileEl.getAttribute("data-tagsearch-path")
-        : fileEl.querySelector?.(".file-header")?.getAttribute("data-path") ||
-          fileEl.querySelector?.("[data-path]")?.getAttribute("data-path") ||
-          null;
+    const el = document.elementFromPoint(Math.min(window.innerWidth / 2, 400), cy);
+    const file = fileOf(el);
+    if (!file) return { file: null, line: null };
     let best = null,
       bestDist = Infinity;
-    fileEl.querySelectorAll?.("td.blob-num[data-line-number]").forEach((td) => {
-      const r = td.getBoundingClientRect();
-      const d = Math.abs((r.top + r.bottom) / 2 - cy);
-      if (d < bestDist) {
-        bestDist = d;
-        best = td;
-      }
-    });
+    el.closest("[data-tagsearch-path], .file, .js-file")
+      ?.querySelectorAll("td.blob-num[data-line-number]")
+      .forEach((td) => {
+        const r = td.getBoundingClientRect();
+        const d = Math.abs((r.top + r.bottom) / 2 - cy);
+        if (d < bestDist) (bestDist = d), (best = td);
+      });
     const line = best ? parseInt(best.getAttribute("data-line-number"), 10) : null;
-    return { file: path, line: Number.isFinite(line) ? line : null };
+    return { file, line: Number.isFinite(line) ? line : null };
   }
-  const fmtAnchor = (a) =>
-    a.file ? `${a.file}${a.line ? ":" + a.line : ""}` : "no on-screen location";
+
+  // Priority: live selection → recent selection → recent click → viewport.
+  function anchorNow() {
+    const live = selAnchor();
+    if (live) return live;
+    const fresh = (x) => x && Date.now() - x.ts < 12000;
+    if (fresh(lastSel)) return { file: lastSel.file, line: lastSel.line, endLine: lastSel.endLine, snippet: lastSel.snippet };
+    if (fresh(lastClick)) return { file: lastClick.file, line: lastClick.line };
+    return anchorViewport();
+  }
+  function fmtAnchor(a) {
+    if (!a || !a.file) return "no selection/line — will infer from words";
+    const range = a.endLine && a.endLine !== a.line ? `${a.line}-${a.endLine}` : a.line || "";
+    return `${a.file}${range ? ":" + range : ""}`;
+  }
 
   // ---------- UI --------------------------------------------------------------
   const root = document.createElement("div");
@@ -96,9 +153,9 @@
     segEl.innerHTML = segments
       .map(
         (s) =>
-          `<li><span class="vp-loc">${s.file ? fmtAnchor(s) : "unanchored"}</span>${escapeHtml(
-            s.text
-          )}</li>`
+          `<li><span class="vp-loc">${escapeHtml(fmtAnchor(s))}</span>${
+            s.snippet ? `<code class="vp-snip">${escapeHtml(s.snippet.slice(0, 90))}</code>` : ""
+          }${escapeHtml(s.text)}</li>`
       )
       .join("");
     sendBtn.disabled = segments.length === 0;
