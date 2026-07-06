@@ -18,7 +18,11 @@
     mediaStream = null,
     chunks = [],
     recStart = 0,
-    timeline = [];
+    timeline = [],
+    paused = false,
+    dispatched = false,
+    stopResolve = null,
+    activePort = null;
   function pushTimeline() {
     if (!recording) return;
     timeline.push({ t: Date.now() - recStart, ...anchorNow() });
@@ -148,16 +152,52 @@
     sendBtn = $("#vp-send"),
     statusEl = $("#vp-status");
 
-  // One click = open + start recording immediately (context loads in parallel).
+  // Tear down all in-flight state and return the panel to a clean, fresh-session
+  // state. Called on every open so reopening after a send/stop is never janky.
+  function teardown() {
+    try { if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop(); } catch {}
+    mediaStream?.getTracks().forEach((t) => t.stop());
+    clearInterval(anchorTimer);
+    try { activePort?.disconnect(); } catch {}
+    mediaRecorder = null;
+    mediaStream = null;
+    stopResolve = null;
+    activePort = null;
+    recording = false;
+    paused = false;
+    dispatched = false;
+    chunks = [];
+    timeline = [];
+    segments = [];
+    lastSel = null;
+    lastClick = null;
+  }
+  function resetUI() {
+    segEl.innerHTML = "";
+    statusEl.hidden = true;
+    statusEl.innerHTML = "";
+    lookingEl.textContent = "";
+    typeEl.value = "";
+    ctxEl.textContent = `PR #${m[3]}`;
+    sendBtn.disabled = false;
+    sendBtn.textContent = "Dispatch →";
+    toggleBtn.disabled = false;
+    toggleBtn.textContent = "● Record";
+    toggleBtn.classList.remove("vp-recording");
+  }
+
+  // One click = fresh session + open + start recording (context loads in parallel).
   pill.addEventListener("click", () => {
+    teardown();
+    resetUI();
+    sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     panel.hidden = false;
     pill.hidden = true;
-    sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     loadContext();
     start();
   });
   $("#vp-close").addEventListener("click", () => {
-    if (recording) stop();
+    teardown(); // closing cancels the current session; reopening starts fresh
     panel.hidden = true;
     pill.hidden = false;
   });
@@ -199,9 +239,6 @@
   }
 
   // ---------- audio recording ------------------------------------------------
-  let paused = false,
-    dispatched = false,
-    stopResolve = null;
   function paintLooking() {
     if (paused) return (lookingEl.innerHTML = `<span class="vp-dim">⏸ paused</span>`);
     if (!recording) return (lookingEl.textContent = "");
@@ -308,6 +345,7 @@
     const audio = await stopAndGetAudio();
     try {
       const port = chrome.runtime.connect({ name: "dispatch" });
+      activePort = port;
       port.onMessage.addListener((ev) => {
         if (ev.stage === "_end") return port.disconnect();
         onEvent(ev);
