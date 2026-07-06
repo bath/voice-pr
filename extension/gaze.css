@@ -1,0 +1,37 @@
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  color-scheme: dark;
+}
+
+body {
+  font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+#vp-gaze-status {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  max-width: 280px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(27, 31, 36, 0.88);
+  color: #e6edf3;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+body.vp-gaze-active #vp-gaze-status {
+  display: none;
+}
+
+#webgazerVideoContainer,
+#webgazerVideoFeed,
+#webgazerFaceOverlay,
+#webgazerFaceFeedbackBox,
+#webgazerGazeDot {
+  z-index: 1 !important;
+}

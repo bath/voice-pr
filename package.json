@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "demo": "bash scripts/setup-demo-pr.sh"
+    "demo": "bash scripts/setup-demo-pr.sh",
+    "test": "node scripts/validate-extension-gaze.js"
   },
   "dependencies": {},
   "engines": {

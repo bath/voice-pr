@@ -5,15 +5,6 @@
 const BRIDGE = "http://localhost:4100";
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  // lazy-load the vendored WebGazer into the tab (isolated world) only when the
-  // user turns on gaze — keeps 1.6MB off every PR page.
-  if (msg?.type === "inject-webgazer") {
-    chrome.scripting
-      .executeScript({ target: { tabId: _sender.tab.id }, files: ["vendor/webgazer.js"] })
-      .then(() => sendResponse({ ok: true }))
-      .catch((e) => sendResponse({ ok: false, error: String(e) }));
-    return true;
-  }
   // record-start context enrichment
   if (msg?.type === "context") {
     fetch(`${BRIDGE}/api/context?pr=${encodeURIComponent(msg.prUrl)}`)

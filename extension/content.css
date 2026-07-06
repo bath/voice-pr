@@ -17,6 +17,16 @@
 #voicepr-root * { box-sizing: border-box; }
 
 /* gaze dot — where the on-device eye tracker thinks you're looking */
+#vp-gaze-frame {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 2147482997;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
 #vp-gazedot {
   position: fixed;
   z-index: 2147482998;
