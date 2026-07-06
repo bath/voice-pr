@@ -35,55 +35,9 @@
   // (the same scheme in your URL bar), and the file sidebar maps #diff-<hash> to
   // the path. This works on BOTH the classic /files view and the new React
   // /changes view, so we anchor off it and fall back to classic DOM selectors.
-  function fileMap() {
-    const map = {};
-    document.querySelectorAll('a[href^="#diff-"]').forEach((a) => {
-      const m = (a.getAttribute("href") || "").match(/^#diff-([0-9a-f]+)$/);
-      const path = (a.textContent || "").trim();
-      if (m && path && !map[m[1]]) map[m[1]] = path;
-    });
-    return map;
-  }
-  // Nearest diff-line deep-link id to a node → { hash, side, line } (line may be
-  // null if only the file container id is found).
-  function diffAnchor(el) {
-    let node = el && (el.nodeType === 3 ? el.parentElement : el);
-    if (!node) return null;
-    let hash = null;
-    const LINE = /^diff-([0-9a-f]+)([LR])(\d+)$/;
-    for (let n = node, d = 0; n && n !== document.body && d < 8; n = n.parentElement, d++) {
-      let m = (n.id || "").match(LINE);
-      if (m) return { hash: m[1], side: m[2], line: +m[3] };
-      const fm = (n.id || "").match(/^diff-([0-9a-f]+)$/);
-      if (fm && !hash) hash = fm[1];
-      const row = n.closest?.("tr");
-      if (row) {
-        const hit = [...row.querySelectorAll("[id]")].find((x) => LINE.test(x.id));
-        if (hit) { const mm = hit.id.match(LINE); return { hash: mm[1], side: mm[2], line: +mm[3] }; }
-      }
-    }
-    return hash ? { hash, side: null, line: null } : null;
-  }
-  function fileOf(el) {
-    const a = diffAnchor(el);
-    if (a) { const p = fileMap()[a.hash]; if (p) return p; }
-    const f = el && el.closest?.("[data-tagsearch-path], .file, .js-file");
-    return f
-      ? f.getAttribute?.("data-tagsearch-path") ||
-          f.querySelector?.(".file-header")?.getAttribute("data-path") ||
-          f.querySelector?.("[data-path]")?.getAttribute("data-path") ||
-          null
-      : null;
-  }
-  function lineOf(el) {
-    const a = diffAnchor(el);
-    if (a && a.line != null) return a.line;
-    const row = el && (el.nodeType === 3 ? el.parentElement : el)?.closest?.("tr");
-    if (!row) return null;
-    const nums = [...row.querySelectorAll("td.blob-num[data-line-number]")];
-    const n = nums.length ? parseInt(nums[nums.length - 1].getAttribute("data-line-number"), 10) : NaN;
-    return Number.isFinite(n) ? n : null;
-  }
+  const anchoring = window.createVoicePrAnchoring?.({ document, window });
+  if (!anchoring) return console.warn("voice-pr anchoring helpers missing");
+  const { fileOf, lineOf, anchorAtPoint, anchorViewport, fmtAnchor } = anchoring;
 
   // Track what the user last selected / clicked in the diff — richer than the
   // viewport, and what people actually do ("highlight this, then say what's wrong").
@@ -119,29 +73,6 @@
     pushTimeline("click");
   });
 
-  // The code token/identifier directly under a screen point (the "laser dot").
-  function tokenAt(x, y) {
-    const r = document.caretRangeFromPoint?.(x, y);
-    const node = r?.startContainer;
-    if (!node || node.nodeType !== 3) return null;
-    const text = node.textContent || "";
-    const isW = (c) => /[\w$.]/.test(c || "");
-    let i = r.startOffset;
-    if (!isW(text[i]) && !isW(text[i - 1])) return null;
-    let a = i, b = i;
-    while (a > 0 && isW(text[a - 1])) a--;
-    while (b < text.length && isW(text[b])) b++;
-    const tok = text.slice(a, b).trim().replace(/^\.+|\.+$/g, "");
-    return tok && tok.length <= 60 ? tok : null;
-  }
-  // Full attention datum at a screen point: file, line, token, coords.
-  function anchorAtPoint(x, y) {
-    const el = document.elementFromPoint(x, y);
-    const file = fileOf(el);
-    if (!file) return null;
-    return { file, line: lineOf(el), token: tokenAt(x, y) || null, x: Math.round(x), y: Math.round(y) };
-  }
-
   // Mouse-as-laser: while recording, continuously capture where the pointer is
   // over the diff — movement (on change), dwell (lingering = strong attention),
   // and the token under it. Throttled; only logs when the target changes.
@@ -168,25 +99,6 @@
     }, 700);
   });
 
-  // Viewport-center fallback (what's on screen if you didn't select/click).
-  function anchorViewport() {
-    const cy = window.innerHeight / 2;
-    const el = document.elementFromPoint(Math.min(window.innerWidth / 2, 400), cy);
-    const file = fileOf(el);
-    if (!file) return { file: null, line: null };
-    let best = null,
-      bestDist = Infinity;
-    el.closest("[data-tagsearch-path], .file, .js-file")
-      ?.querySelectorAll("td.blob-num[data-line-number]")
-      .forEach((td) => {
-        const r = td.getBoundingClientRect();
-        const d = Math.abs((r.top + r.bottom) / 2 - cy);
-        if (d < bestDist) (bestDist = d), (best = td);
-      });
-    const line = best ? parseInt(best.getAttribute("data-line-number"), 10) : null;
-    return { file, line: Number.isFinite(line) ? line : null };
-  }
-
   // A live text selection always wins; otherwise take the MOST RECENT signal
   // among selection / click / pointer-hover (pointing counts as attention).
   function anchorNow() {
@@ -201,12 +113,6 @@
     }
     return anchorViewport();
   }
-  function fmtAnchor(a) {
-    if (!a || !a.file) return "no target — will infer from words";
-    const range = a.endLine && a.endLine !== a.line ? `${a.line}-${a.endLine}` : a.line || "";
-    return `${a.file}${range ? ":" + range : ""}${a.token ? ` \`${a.token}\`` : ""}`;
-  }
-
   // ---------- UI --------------------------------------------------------------
   const root = document.createElement("div");
   root.id = "voicepr-root";
