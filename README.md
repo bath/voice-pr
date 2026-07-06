@@ -53,23 +53,46 @@ call, and session streaming all exercised end-to-end.
 ```bash
 # 1. Start the bridge (talks to gh + your orchestrator container)
 node server.js                      # → http://localhost:4100
+# or choose another port
+PORT=4101 node server.js            # → http://localhost:4101
 ```
 
 2. Load the extension **once**: open `chrome://extensions`, turn on
    **Developer mode**, click **Load unpacked**, and pick the `extension/`
    folder. (Chrome won't let anything auto-install a local extension — this one
    manual step is unavoidable.)
-3. Open any PR's **Files changed** tab on GitHub. A **🎙️ Review with voice**
+3. If you changed the bridge port, open the extension's **Details → Extension
+   options** page, or click **⚙ bridge** in the voice-pr panel, and set the
+   bridge URL (for example, `http://localhost:4101`).
+4. Open any PR's **Files changed** tab on GitHub. A **🎙️ Review with voice**
    pill appears bottom-right.
-4. Click it → **Start recording** → scroll and talk. Each comment shows the
+5. Click it → **Start recording** → scroll and talk. Each comment shows the
    `file:line` it anchored to. (First time, Chrome asks for mic permission on
    github.com. No mic / not Chrome? Type comments into the box instead — same
    result.)
-5. **Hand to orchestrator →**. Close the tab if you want; the PR updates in a
+6. **Hand to orchestrator →**. Close the tab if you want; the PR updates in a
    few minutes. The panel also streams live progress and links the result.
 
 The extension always routes through the **orchestrator** backend, so the bridge
 must be able to reach your pogo container (see below).
+
+## Package the Chrome extension
+
+For a shareable review/upload artifact:
+
+```bash
+npm run check:extension
+npm run package:extension
+```
+
+This validates the manifest, options page, loopback host permissions, and
+required extension files, then writes `dist/voice-pr-extension/` for **Load
+unpacked** and `dist/voice-pr-extension-<version>.zip` for sharing.
+The generated package outputs are intentionally ignored by git.
+
+To smoke-test the packaged artifact locally, open `chrome://extensions`, enable
+**Developer mode**, click **Load unpacked**, and select
+`dist/voice-pr-extension/`.
 
 ## Speech-to-text: local Whisper (private, accurate)
 
@@ -194,6 +217,9 @@ file, or `ANTHROPIC_API_KEY`). OAuth tokens expire — if the mayor/polecats log
 | `VOICE_PR_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
 | `VOICE_PR_WHISPER_MODEL` | `~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin` | GGML model path |
 | `VOICE_PR_ARCHIVE_DIR` | `~/.voice-pr/sessions` | where session fixtures are saved |
+
+The Chrome extension stores its bridge origin separately in **Extension options**
+(`http://localhost:4100` by default). Change it there whenever `PORT` changes.
 
 ## Session archive (fixtures)
 

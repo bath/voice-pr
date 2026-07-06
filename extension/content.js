@@ -3,7 +3,6 @@
 // file+line centered in your viewport when you said it, then the whole session
 // is handed to the local bridge → orchestrator.
 (function () {
-  const BRIDGE = "http://localhost:4100";
   const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   if (!m) return;
   const prUrl = `${location.origin}/${m[1]}/${m[2]}/pull/${m[3]}`;
@@ -216,6 +215,7 @@
       <div class="vp-head">
         <span class="vp-title">🎙️ voice-pr</span>
         <span class="vp-head-right">
+          <button id="vp-options-btn" class="vp-dbg" title="configure local bridge URL/port">⚙ bridge</button>
           <button id="vp-gaze-btn" class="vp-dbg" title="experimental: on-device webcam eye tracking (video never leaves your machine)">👁 gaze</button>
           <button id="vp-debug-btn" class="vp-dbg" title="show what's being captured as you talk">🐛 debug</button>
           <button id="vp-close" class="vp-x">✕</button>
@@ -263,6 +263,7 @@
     lookingEl = $("#vp-looking"),
     debugEl = $("#vp-debug"),
     debugBtn = $("#vp-debug-btn"),
+    optionsBtn = $("#vp-options-btn"),
     gazeBtn = $("#vp-gaze-btn"),
     toggleBtn = $("#vp-toggle"),
     sendBtn = $("#vp-send"),
@@ -344,6 +345,10 @@
   });
   applyDebug();
 
+  optionsBtn.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "open-options" });
+  });
+
   // ---------- gaze: experimental on-device webcam eye tracking ----------------
   // WebGazer runs entirely in-browser — webcam frames never leave the machine
   // (only the face model downloads once from Google). Gaze is just another
@@ -409,7 +414,8 @@
     ctxEl.textContent = "loading context…";
     chrome.runtime.sendMessage({ type: "context", prUrl }, (res) => {
       if (!res || !res.ok || res.json?.error) {
-        ctxEl.innerHTML = `<span class="vp-warn">bridge not reachable — is the voice-pr server running on ${BRIDGE}?</span>`;
+        const bridge = res?.bridgeUrl || "the configured bridge";
+        ctxEl.innerHTML = `<span class="vp-warn">bridge not reachable — is the voice-pr server running on ${escapeHtml(bridge)}?</span>`;
         return;
       }
       const c = res.json;
@@ -559,7 +565,8 @@
   function onEvent(ev) {
     const { stage, detail } = ev;
     if (stage === "result" || stage === "done") return done(detail);
-    if (stage === "error") return line(`error: ${detail.message}`, true);
+    if (stage === "error")
+      return line(`error: ${detail.message}${detail.bridgeUrl ? ` (${detail.bridgeUrl})` : ""}`, true);
     if (stage === "agent-log") return;
     const f = STAGE[stage];
     line(f ? f(detail || {}) : stage);

@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>voice-pr options</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        max-width: 560px;
+        font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #1f2328;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 9px 10px;
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        font: inherit;
+      }
+      .help {
+        color: #57606a;
+        margin: 8px 0 16px;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        border: 1px solid #d0d7de;
+        border-radius: 6px;
+        padding: 8px 12px;
+        background: #f6f8fa;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.primary {
+        background: #0969da;
+        border-color: #0969da;
+        color: white;
+      }
+      #status {
+        min-height: 20px;
+        margin-top: 12px;
+      }
+      .error {
+        color: #cf222e;
+      }
+      code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>voice-pr bridge</h1>
+    <p class="help">
+      Set the local bridge origin the extension should call. The default matches
+      <code>node server.js</code>.
+    </p>
+
+    <form id="options-form">
+      <label for="bridge-url">Bridge URL and port</label>
+      <input id="bridge-url" name="bridge-url" spellcheck="false" placeholder="http://localhost:4100" />
+      <p class="help">Allowed origins: <code>http://localhost:&lt;port&gt;</code> or <code>http://127.0.0.1:&lt;port&gt;</code>.</p>
+      <div class="actions">
+        <button class="primary" type="submit">Save</button>
+        <button id="reset" type="button">Reset default</button>
+      </div>
+    </form>
+
+    <div id="status" role="status"></div>
+    <script src="options.js"></script>
+  </body>
+</html>

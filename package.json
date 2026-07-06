@@ -9,7 +9,9 @@
   },
   "scripts": {
     "start": "node server.js",
-    "demo": "bash scripts/setup-demo-pr.sh"
+    "demo": "bash scripts/setup-demo-pr.sh",
+    "check:extension": "node scripts/package-extension.mjs --check",
+    "package:extension": "node scripts/package-extension.mjs"
   },
   "dependencies": {},
   "engines": {
