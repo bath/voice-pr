@@ -5,6 +5,8 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname } from "node:path";
 import { runBatch, runSession, getContext } from "./lib/pipeline.js";
+import { transcribe, anchorSegments } from "./lib/transcribe.js";
+import { saveAudio, saveJson, ARCHIVE_ROOT } from "./lib/archive.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC = join(__dirname, "public");
@@ -34,6 +36,8 @@ const server = createServer(async (req, res) => {
     if (req.method === "OPTIONS") return res.writeHead(204).end();
     if (req.method === "GET" && url.pathname === "/api/context")
       return await handleContext(url, res);
+    if (req.method === "POST" && url.pathname === "/api/transcribe")
+      return await handleTranscribe(req, res);
     if (req.method === "POST" && url.pathname === "/api/session")
       return await handleStream(req, res, (input, send) => runSession(input, send));
     if (req.method === "POST" && url.pathname === "/api/batch")
@@ -45,6 +49,38 @@ const server = createServer(async (req, res) => {
     res.end(`error: ${e.message}`);
   }
 });
+
+async function handleTranscribe(req, res) {
+  try {
+    const body = await readBody(req);
+    const { audioB64, ext = "webm", timeline = [], sessionId, prUrl } = JSON.parse(body || "{}");
+    if (!audioB64) throw new Error("no audio");
+    const audio = Buffer.from(audioB64, "base64");
+    console.log(`[transcribe] ${(audio.length / 1024).toFixed(0)}KB ${ext}, ${timeline.length} timeline pts`);
+    const t0 = Date.now();
+    const segs = await transcribe(audio, ext);
+    const anchored = anchorSegments(segs, timeline);
+    console.log(`[transcribe] ${segs.length} segments in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    // archive the recording + transcript as a reusable fixture
+    if (sessionId) {
+      await saveAudio(sessionId, audio, ext);
+      await saveJson(sessionId, "transcript.json", {
+        at: new Date().toISOString(),
+        prUrl: prUrl || null,
+        raw: segs.map((s) => s.text).join(" "),
+        segments: anchored,
+        rawSegments: segs,
+        timeline,
+      });
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ segments: anchored, raw: segs.map((s) => s.text).join(" ") }));
+  } catch (e) {
+    console.error(`[transcribe] error: ${e.message}`);
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: e.message }));
+  }
+}
 
 async function handleContext(url, res) {
   const prRef = url.searchParams.get("pr");
@@ -82,16 +118,19 @@ async function handleStream(req, res, runner) {
     "x-accel-buffering": "no",
   });
   const t0 = Date.now();
-  const send = (stage, detail) =>
-    res.write(
-      JSON.stringify({ stage, detail, t: Math.round((Date.now() - t0) / 1000) }) + "\n"
-    );
+  const events = [];
+  const send = (stage, detail) => {
+    events.push({ stage, detail, t: Math.round((Date.now() - t0) / 1000) });
+    res.write(JSON.stringify({ stage, detail, t: Math.round((Date.now() - t0) / 1000) }) + "\n");
+  };
 
+  let result = null,
+    err = null;
   try {
     console.log(
       `[req] PR=${input.prRef} ${input.segments ? `${input.segments.length} segments` : "transcript"}`
     );
-    const result = await runner(input, send);
+    result = await runner(input, send);
     send("result", result);
     console.log(
       result.backend === "orchestrator"
@@ -99,9 +138,22 @@ async function handleStream(req, res, runner) {
         : `[req] done: ${result.committed.length} committed`
     );
   } catch (e) {
+    err = e.message;
     console.error(`[req] error: ${e.message}`);
     send("error", { message: e.message });
   } finally {
+    // archive the whole session (input + every event + result) as a fixture
+    if (input.sessionId) {
+      await saveJson(input.sessionId, "session.json", {
+        at: new Date().toISOString(),
+        prRef: input.prRef,
+        segments: input.segments || null,
+        transcript: (input.segments || []).map((s) => s.text).join(" "),
+        result,
+        error: err,
+        events,
+      }).catch(() => {});
+    }
     res.end();
   }
 }

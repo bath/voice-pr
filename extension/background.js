@@ -4,14 +4,33 @@
 // host_permissions.
 const BRIDGE = "http://localhost:4100";
 
-// One-shot: record-start context enrichment.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type !== "context") return;
-  fetch(`${BRIDGE}/api/context?pr=${encodeURIComponent(msg.prUrl)}`)
-    .then((r) => r.json())
-    .then((json) => sendResponse({ ok: true, json }))
-    .catch((e) => sendResponse({ ok: false, error: String(e) }));
-  return true; // async sendResponse
+  // record-start context enrichment
+  if (msg?.type === "context") {
+    fetch(`${BRIDGE}/api/context?pr=${encodeURIComponent(msg.prUrl)}`)
+      .then((r) => r.json())
+      .then((json) => sendResponse({ ok: true, json }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
+  // local whisper transcription of a recorded session
+  if (msg?.type === "transcribe") {
+    fetch(`${BRIDGE}/api/transcribe`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        audioB64: msg.audioB64,
+        ext: msg.ext,
+        timeline: msg.timeline,
+        sessionId: msg.sessionId,
+        prUrl: msg.prUrl,
+      }),
+    })
+      .then((r) => r.json())
+      .then((json) => sendResponse({ ok: !json.error, json }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
 });
 
 // Streaming: a live session. The content script opens a port; we POST the

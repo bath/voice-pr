@@ -71,14 +71,34 @@ node server.js                      # → http://localhost:4100
 The extension always routes through the **orchestrator** backend, so the bridge
 must be able to reach your pogo container (see below).
 
+## Speech-to-text: local Whisper (private, accurate)
+
+Transcription runs **locally** through `whisper.cpp` on the bridge — audio never
+leaves the machine (right call for PR code). The extension records audio + an
+anchor timeline; on stop it hands both to the bridge, which transcribes with
+Whisper (segment timestamps) and maps each spoken phrase back to the file/line/
+selection that was active when you said it.
+
+Setup (one-time):
+```bash
+brew install whisper-cpp ffmpeg
+mkdir -p ~/.cache/whisper
+curl -fsSL -o ~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin
+```
+`large-v3-turbo-q5_0` (~547MB) runs faster-than-realtime on Apple Silicon and is
+far more accurate than the browser's Web Speech API for technical speech. Swap
+the model via `VOICE_PR_WHISPER_MODEL`.
+
 ## Requirements
 
 - **Node ≥ 20** (bridge uses only built-ins — no `npm install`).
 - **`gh` CLI**, authenticated with push access to the target repo.
+- **`whisper-cli` + `ffmpeg`** + a GGML model (see above) for transcription.
 - A running **pogo orchestrator container** (`codingagent`) for the extension
   path — see "orchestrator backend" below. (The localhost `direct` fallback
   instead needs the **`claude` CLI** authenticated.)
-- **Chrome** for the extension + mic (Web Speech API).
+- **Chrome** for the extension + mic.
 
 ## Run
 
@@ -171,6 +191,20 @@ file, or `ANTHROPIC_API_KEY`). OAuth tokens expire — if the mayor/polecats log
 | `VOICE_PR_CONTAINER` | `codingagent` | orchestrator container name |
 | `VOICE_PR_WORKSPACE` | `/home/pogo/workspace` | repo checkout root inside the container |
 | `VOICE_PR_DISPATCH_MS` | `720000` | how long to track a work item before returning |
+| `VOICE_PR_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
+| `VOICE_PR_WHISPER_MODEL` | `~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin` | GGML model path |
+| `VOICE_PR_ARCHIVE_DIR` | `~/.voice-pr/sessions` | where session fixtures are saved |
+
+## Session archive (fixtures)
+
+Every session is saved under `VOICE_PR_ARCHIVE_DIR/<sessionId>/` for replay,
+test cases, and examples:
+- `audio.<ext>` — the raw recording
+- `transcript.json` — raw text, anchored segments, whisper segment timestamps, the anchor timeline
+- `session.json` — the dispatched segments, every orchestrator progress event, and the final result
+
+The `sessionId` (minted by the extension at record-start) correlates the
+recording, its transcript, and the orchestrator run it produced.
 
 ## Known MVP limits (next passes)
 

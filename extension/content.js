@@ -11,8 +11,18 @@
 
   let recording = false;
   let segments = [];
-  let recog = null;
   let anchorTimer = null;
+  let sessionId = null; // correlates the recording + transcript + orchestrator run
+  // audio recording + anchor timeline (mapped to transcript on the bridge)
+  let mediaRecorder = null,
+    mediaStream = null,
+    chunks = [],
+    recStart = 0,
+    timeline = [];
+  function pushTimeline() {
+    if (!recording) return;
+    timeline.push({ t: Date.now() - recStart, ...anchorNow() });
+  }
 
   // ---------- viewport anchoring ----------------------------------------------
   // Resolve which file the given node lives in (GitHub diff DOM).
@@ -60,11 +70,13 @@
   document.addEventListener("mouseup", () => {
     const s = selAnchor();
     if (s) lastSel = { ...s, ts: Date.now() };
+    pushTimeline();
   });
   document.addEventListener("mousedown", (e) => {
     const file = fileOf(e.target),
       line = lineOf(e.target);
     if (file && line != null) lastClick = { file, line, ts: Date.now() };
+    pushTimeline();
   });
 
   // Viewport-center fallback (what's on screen if you didn't select/click).
@@ -118,8 +130,8 @@
         <input id="vp-type" type="text" placeholder="…or type a comment (uses what you're looking at)" />
       </div>
       <div class="vp-actions">
-        <button id="vp-toggle" class="vp-rec">❚❚ Pause</button>
-        <button id="vp-send" class="vp-send" disabled>Stop &amp; dispatch →</button>
+        <button id="vp-toggle" class="vp-rec">● Record</button>
+        <button id="vp-send" class="vp-send" disabled>Dispatch →</button>
       </div>
       <div id="vp-status" class="vp-status" hidden></div>
     </div>`;
@@ -140,6 +152,7 @@
   pill.addEventListener("click", () => {
     panel.hidden = false;
     pill.hidden = true;
+    sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     loadContext();
     start();
   });
@@ -158,7 +171,7 @@
           }${escapeHtml(s.text)}</li>`
       )
       .join("");
-    sendBtn.disabled = segments.length === 0;
+    sendBtn.disabled = recording || segments.length === 0;
     segEl.scrollTop = segEl.scrollHeight;
   }
   function addSegment(text) {
@@ -186,57 +199,86 @@
     });
   }
 
-  // ---------- speech ----------------------------------------------------------
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  let liveInterim = "";
+  // ---------- audio recording (local Whisper on the bridge) -------------------
   function paintLooking() {
     if (!recording) return (lookingEl.textContent = "");
-    lookingEl.innerHTML = liveInterim
-      ? `<span class="vp-interim">“${escapeHtml(liveInterim)}”</span>`
-      : `<span class="vp-dim">🔴 listening · looking at ${escapeHtml(fmtAnchor(anchorNow()))}</span>`;
+    const secs = Math.floor((Date.now() - recStart) / 1000);
+    const mm = String(Math.floor(secs / 60)).padStart(1, "0");
+    const ss = String(secs % 60).padStart(2, "0");
+    lookingEl.innerHTML = `<span class="vp-dim">🔴 recording ${mm}:${ss} · looking at ${escapeHtml(
+      fmtAnchor(anchorNow())
+    )}</span>`;
   }
-  function start() {
+  async function start() {
     if (recording) return;
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      lookingEl.innerHTML = `<span class="vp-warn">mic blocked — allow the mic (🔒 in the address bar) or just type comments</span>`;
+      return;
+    }
     recording = true;
-    liveInterim = "";
-    toggleBtn.textContent = "❚❚ Pause";
+    chunks = [];
+    timeline = [];
+    recStart = Date.now();
+    pushTimeline();
+    sendBtn.disabled = true;
+    toggleBtn.textContent = "■ Stop & transcribe";
     toggleBtn.classList.add("vp-recording");
     paintLooking();
-    anchorTimer = setInterval(paintLooking, 350);
-    if (SR) {
-      recog = new SR();
-      recog.continuous = true;
-      recog.interimResults = true; // live text as you speak → feels responsive
-      recog.lang = "en-US";
-      recog.onresult = (e) => {
-        let interim = "";
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          const r = e.results[i];
-          if (r.isFinal) addSegment(r[0].transcript);
-          else interim += r[0].transcript;
-        }
-        liveInterim = interim;
-      };
-      recog.onerror = (ev) => {
-        if (ev.error === "not-allowed" || ev.error === "service-not-allowed")
-          lookingEl.innerHTML = `<span class="vp-warn">mic blocked — click the 🔒 in the address bar to allow the mic, or just type comments</span>`;
-      };
-      recog.onend = () => {
-        if (recording) try { recog.start(); } catch {}
-      };
-      try { recog.start(); } catch {}
-    } else {
-      lookingEl.innerHTML = `<span class="vp-warn">no Web Speech API in this browser — type your comments</span>`;
-    }
+    anchorTimer = setInterval(() => {
+      paintLooking();
+      pushTimeline(); // periodic sample so scrolling (no click) is captured too
+    }, 1200);
+    mediaRecorder = new MediaRecorder(mediaStream, mimeType());
+    mediaRecorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    mediaRecorder.onstop = onRecordingStopped;
+    mediaRecorder.start();
+  }
+  function mimeType() {
+    for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"])
+      if (window.MediaRecorder?.isTypeSupported(t)) return { mimeType: t };
+    return {};
   }
   function stop() {
+    if (!recording) return;
     recording = false;
-    liveInterim = "";
-    toggleBtn.textContent = "● Resume";
-    toggleBtn.classList.remove("vp-recording");
     clearInterval(anchorTimer);
-    lookingEl.textContent = "";
-    if (recog) try { recog.stop(); } catch {}
+    toggleBtn.classList.remove("vp-recording");
+    toggleBtn.disabled = true;
+    lookingEl.innerHTML = `<span class="vp-dim">⏳ transcribing locally with Whisper…</span>`;
+    try {
+      mediaRecorder?.stop();
+    } catch {}
+    mediaStream?.getTracks().forEach((t) => t.stop());
+  }
+  async function onRecordingStopped() {
+    const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
+    const ext = /mp4/.test(blob.type) ? "mp4" : "webm";
+    const audioB64 = await blobToB64(blob);
+    chrome.runtime.sendMessage(
+      { type: "transcribe", audioB64, ext, timeline, sessionId, prUrl },
+      (res) => {
+        toggleBtn.disabled = false;
+        toggleBtn.textContent = "● Record more";
+        if (!res || !res.ok || res.json?.error) {
+          lookingEl.innerHTML = `<span class="vp-warn">transcription failed: ${escapeHtml(
+            res?.json?.error || res?.error || "bridge unreachable"
+          )}</span>`;
+          return;
+        }
+        lookingEl.textContent = "";
+        for (const s of res.json.segments || []) segments.push(s);
+        renderSegments();
+      }
+    );
+  }
+  function blobToB64(blob) {
+    return new Promise((resolve) => {
+      const r = new FileReader();
+      r.onloadend = () => resolve(String(r.result).split(",")[1] || "");
+      r.readAsDataURL(blob);
+    });
   }
   toggleBtn.addEventListener("click", () => (recording ? stop() : start()));
   typeEl.addEventListener("keydown", (e) => {
@@ -248,7 +290,7 @@
 
   // ---------- hand off to the orchestrator ------------------------------------
   sendBtn.addEventListener("click", async () => {
-    if (recording) stop();
+    if (recording || !segments.length) return; // finish recording first
     sendBtn.disabled = true;
     toggleBtn.disabled = true;
     statusEl.hidden = false;
@@ -260,7 +302,7 @@
         if (ev.stage === "_end") return port.disconnect();
         onEvent(ev);
       });
-      port.postMessage({ prRef: prUrl, segments });
+      port.postMessage({ prRef: prUrl, segments, sessionId });
     } catch (e) {
       line(`error: ${e.message}`, true);
     }
