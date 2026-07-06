@@ -376,11 +376,16 @@
       }
       const wg = window.webgazer;
       wg.setGazeListener((data) => data && onGaze(data.x, data.y));
-      wg.showVideoPreview?.(false);
-      wg.showPredictionPoints?.(false);
-      wg.showFaceOverlay?.(false);
+      // Show WebGazer's own feedback so you can SEE it working + calibrate:
+      // the webcam preview + face mesh confirm tracking; the red dot is its
+      // raw prediction; our green #vp-gazedot is the anchored one.
+      wg.showVideoPreview?.(true);
+      wg.showFaceOverlay?.(true);
+      wg.showFaceFeedbackBox?.(true);
+      wg.showPredictionPoints?.(true);
       await wg.begin();
       gazeDot.style.display = "block";
+      lookingEl.innerHTML = `<span class="vp-dim">👁 look at a spot and click it a few times to calibrate — the green dot should start following your eyes</span>`;
     } catch (e) {
       gazeOn = false;
       gazeBtn.classList.remove("on");
