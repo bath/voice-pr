@@ -4,6 +4,7 @@
 // is handed to the local bridge → orchestrator.
 (function () {
   const BRIDGE = "http://localhost:4100";
+  const anchors = window.VoicePrAnchors.createAnchorResolver(document, window);
   const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   if (!m) return;
   const prUrl = `${location.origin}/${m[1]}/${m[2]}/pull/${m[3]}`;
@@ -18,16 +19,20 @@
     mediaStream = null,
     chunks = [],
     recStart = 0,
+    sessionStart = 0,
+    audioStartMs = 0,
     timeline = [],
+    captureOpen = false,
     paused = false,
     dispatched = false,
     stopResolve = null,
     activePort = null;
   function pushTimeline(src = "scroll", anchor) {
-    if (!recording) return;
+    if (!captureOpen || !sessionStart) return;
     const a = anchor || anchorNow();
-    timeline.push({ t: Date.now() - recStart, src, ...a });
+    timeline.push({ t: Date.now() - sessionStart, src, ...a });
     debugLine(a, src);
+    if (!recording) paintLooking();
   }
 
   // ---------- diff anchoring (view-agnostic) ----------------------------------
@@ -35,55 +40,8 @@
   // (the same scheme in your URL bar), and the file sidebar maps #diff-<hash> to
   // the path. This works on BOTH the classic /files view and the new React
   // /changes view, so we anchor off it and fall back to classic DOM selectors.
-  function fileMap() {
-    const map = {};
-    document.querySelectorAll('a[href^="#diff-"]').forEach((a) => {
-      const m = (a.getAttribute("href") || "").match(/^#diff-([0-9a-f]+)$/);
-      const path = (a.textContent || "").trim();
-      if (m && path && !map[m[1]]) map[m[1]] = path;
-    });
-    return map;
-  }
-  // Nearest diff-line deep-link id to a node → { hash, side, line } (line may be
-  // null if only the file container id is found).
-  function diffAnchor(el) {
-    let node = el && (el.nodeType === 3 ? el.parentElement : el);
-    if (!node) return null;
-    let hash = null;
-    const LINE = /^diff-([0-9a-f]+)([LR])(\d+)$/;
-    for (let n = node, d = 0; n && n !== document.body && d < 8; n = n.parentElement, d++) {
-      let m = (n.id || "").match(LINE);
-      if (m) return { hash: m[1], side: m[2], line: +m[3] };
-      const fm = (n.id || "").match(/^diff-([0-9a-f]+)$/);
-      if (fm && !hash) hash = fm[1];
-      const row = n.closest?.("tr");
-      if (row) {
-        const hit = [...row.querySelectorAll("[id]")].find((x) => LINE.test(x.id));
-        if (hit) { const mm = hit.id.match(LINE); return { hash: mm[1], side: mm[2], line: +mm[3] }; }
-      }
-    }
-    return hash ? { hash, side: null, line: null } : null;
-  }
-  function fileOf(el) {
-    const a = diffAnchor(el);
-    if (a) { const p = fileMap()[a.hash]; if (p) return p; }
-    const f = el && el.closest?.("[data-tagsearch-path], .file, .js-file");
-    return f
-      ? f.getAttribute?.("data-tagsearch-path") ||
-          f.querySelector?.(".file-header")?.getAttribute("data-path") ||
-          f.querySelector?.("[data-path]")?.getAttribute("data-path") ||
-          null
-      : null;
-  }
-  function lineOf(el) {
-    const a = diffAnchor(el);
-    if (a && a.line != null) return a.line;
-    const row = el && (el.nodeType === 3 ? el.parentElement : el)?.closest?.("tr");
-    if (!row) return null;
-    const nums = [...row.querySelectorAll("td.blob-num[data-line-number]")];
-    const n = nums.length ? parseInt(nums[nums.length - 1].getAttribute("data-line-number"), 10) : NaN;
-    return Number.isFinite(n) ? n : null;
-  }
+  const fileOf = (el) => anchors.fileOf(el);
+  const lineOf = (el) => anchors.lineOf(el);
 
   // Track what the user last selected / clicked in the diff — richer than the
   // viewport, and what people actually do ("highlight this, then say what's wrong").
@@ -142,7 +100,7 @@
     return { file, line: lineOf(el), token: tokenAt(x, y) || null, x: Math.round(x), y: Math.round(y) };
   }
 
-  // Mouse-as-laser: while recording, continuously capture where the pointer is
+  // Mouse-as-laser: while the session is open, continuously capture where the pointer is
   // over the diff — movement (on change), dwell (lingering = strong attention),
   // and the token under it. Throttled; only logs when the target changes.
   let lastHover = null,
@@ -150,7 +108,7 @@
     moveThrottle = 0,
     dwellTimer = null;
   document.addEventListener("mousemove", (e) => {
-    if (!recording) return;
+    if (!captureOpen) return;
     const now = Date.now();
     laserPaint(e.clientX, e.clientY);
     if (now - moveThrottle < 120) return;
@@ -164,27 +122,13 @@
     pushTimeline("move", a);
     clearTimeout(dwellTimer);
     dwellTimer = setTimeout(() => {
-      if (recording && hoverKey === key) pushTimeline("dwell", a); // lingered here
+      if (captureOpen && hoverKey === key) pushTimeline("dwell", a); // lingered here
     }, 700);
   });
 
   // Viewport-center fallback (what's on screen if you didn't select/click).
   function anchorViewport() {
-    const cy = window.innerHeight / 2;
-    const el = document.elementFromPoint(Math.min(window.innerWidth / 2, 400), cy);
-    const file = fileOf(el);
-    if (!file) return { file: null, line: null };
-    let best = null,
-      bestDist = Infinity;
-    el.closest("[data-tagsearch-path], .file, .js-file")
-      ?.querySelectorAll("td.blob-num[data-line-number]")
-      .forEach((td) => {
-        const r = td.getBoundingClientRect();
-        const d = Math.abs((r.top + r.bottom) / 2 - cy);
-        if (d < bestDist) (bestDist = d), (best = td);
-      });
-    const line = best ? parseInt(best.getAttribute("data-line-number"), 10) : null;
-    return { file, line: Number.isFinite(line) ? line : null };
+    return anchors.anchorViewport();
   }
 
   // A live text selection always wins; otherwise take the MOST RECENT signal
@@ -238,9 +182,8 @@
   laser.style.display = "none";
   document.body.appendChild(laser);
   function laserPaint(x, y) {
-    const cell = recording && document.elementFromPoint(x, y)?.closest?.("td.blob-code");
-    if (!cell) return void (laser.style.display = "none");
-    const r = cell.getBoundingClientRect();
+    const r = captureOpen && anchors.highlightRectAtPoint(x, y);
+    if (!r) return void (laser.style.display = "none");
     Object.assign(laser.style, {
       display: "block",
       top: `${r.top}px`,
@@ -283,7 +226,11 @@
     paused = false;
     dispatched = false;
     chunks = [];
+    recStart = 0;
+    sessionStart = 0;
+    audioStartMs = 0;
     timeline = [];
+    captureOpen = false;
     segments = [];
     lastSel = null;
     lastClick = null;
@@ -311,9 +258,13 @@
     teardown();
     resetUI();
     sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    sessionStart = Date.now();
+    captureOpen = true;
     panel.hidden = false;
     pill.hidden = true;
     loadContext();
+    paintLooking();
+    pushTimeline("open");
     start();
   });
   $("#vp-close").addEventListener("click", () => {
@@ -330,7 +281,7 @@
   }
   function debugLine(a, src) {
     if (!debugOn) return;
-    const secs = Math.floor((Date.now() - recStart) / 1000);
+    const secs = Math.floor((Date.now() - sessionStart) / 1000);
     const row = document.createElement("div");
     row.className = "vp-dbgrow";
     row.textContent = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")} · ${src} · ${fmtAnchor(a)}`;
@@ -362,7 +313,7 @@
     const key = `${a.file}:${a.line}:${a.token || ""}`;
     if (key === gazeKey) return;
     gazeKey = key;
-    if (recording) pushTimeline("gaze", a);
+    if (captureOpen) pushTimeline("gaze", a);
   }
   // test/injection seam: a synthetic gaze coordinate (real source is WebGazer).
   window.addEventListener("vp-synthetic-gaze", (e) => onGaze(e.detail?.x, e.detail?.y));
@@ -423,7 +374,13 @@
   // ---------- audio recording ------------------------------------------------
   function paintLooking() {
     if (paused) return (lookingEl.innerHTML = `<span class="vp-dim">⏸ paused</span>`);
-    if (!recording) return (lookingEl.textContent = "");
+    if (!captureOpen) return (lookingEl.textContent = "");
+    if (!recording) {
+      lookingEl.innerHTML = `<span class="vp-dim">capturing attention · pointing at ${escapeHtml(
+        fmtAnchor(anchorNow())
+      )}</span>`;
+      return;
+    }
     const secs = Math.floor((Date.now() - recStart) / 1000);
     lookingEl.innerHTML = `<span class="vp-dim">🔴 recording ${Math.floor(secs / 60)}:${String(
       secs % 60
@@ -446,9 +403,10 @@
     recording = true;
     paused = false;
     chunks = [];
-    timeline = [];
     recStart = Date.now();
-    pushTimeline("start");
+    if (!sessionStart) sessionStart = recStart;
+    audioStartMs = recStart - sessionStart;
+    pushTimeline("record-start");
     sendBtn.disabled = false; // Dispatch is live the entire time
     toggleBtn.textContent = "❚❚ Pause";
     toggleBtn.classList.add("vp-recording");
@@ -516,6 +474,7 @@
     // stuck "❚❚ Pause" button).
     recording = false;
     paused = false;
+    captureOpen = false;
     clearInterval(anchorTimer);
     toggleBtn.disabled = true;
     toggleBtn.textContent = "● Record";
@@ -534,7 +493,7 @@
         if (ev.stage === "_end") return port.disconnect();
         onEvent(ev);
       });
-      port.postMessage({ prRef: prUrl, sessionId, typedSegments: segments, timeline, ...(audio || {}) });
+      port.postMessage({ prRef: prUrl, sessionId, typedSegments: segments, timeline, audioStartMs, ...(audio || {}) });
     } catch (e) {
       line(`error: ${e.message}`, true);
     }
