@@ -218,6 +218,7 @@
         <button id="vp-close" class="vp-icon vp-x" title="Close">✕</button>
       </header>
       <div id="vp-context" class="vp-context"></div>
+      <div id="vp-tray" class="vp-tray" hidden></div>
       <div class="vp-body">
         <div id="vp-ready" class="vp-ready" hidden></div>
         <div id="vp-looking" class="vp-looking vp-now" aria-live="polite"></div>
@@ -275,6 +276,7 @@
     menuBtn = $("#vp-menu-btn"),
     menuEl = $("#vp-menu"),
     readyEl = $("#vp-ready"),
+    trayEl = $("#vp-tray"),
     statusEl = $("#vp-status"),
     hudEl = $("#vp-hud"),
     hudPulseEl = $("#vp-hud-pulse"),
@@ -1147,6 +1149,175 @@
   function escapeHtml(s) {
     return (s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   }
+
+  // ---------- cross-PR background-work tray -----------------------------------
+  // Dispatches are centralized by the background worker into `voicepr:jobs`
+  // (shared storage). This tab renders every *other* PR's in-flight and recent
+  // work here — so while reviewing PR #5 you still see PR #4's trail finish, can
+  // read what came back, and jump straight to its tab. The current PR is omitted
+  // (its own run is the main log above). A badge on the pill mirrors the count of
+  // active jobs so the awareness survives even with the panel collapsed.
+  const JOBS_KEY = "voicepr:jobs";
+  const trayExpanded = new Set(); // prUrls whose result detail is open
+  let trayCollapsed = false;
+  const pillBadge = document.createElement("span");
+  pillBadge.className = "vp-pill-badge";
+  pillBadge.hidden = true;
+  pill.appendChild(pillBadge);
+
+  const STATUS_TEXT = { queued: "queued", running: "running", done: "done", failed: "failed", error: "error" };
+  const isActive = (s) => s === "queued" || s === "running";
+
+  function jumpTo(job) {
+    try {
+      chrome.runtime.sendMessage({ type: "focus-pr", prUrl: job.prUrl, tabId: job.originTabId });
+    } catch {}
+  }
+  function dismiss(job) {
+    trayExpanded.delete(job.prUrl);
+    try {
+      chrome.runtime.sendMessage({ type: "dismiss-job", prUrl: job.prUrl });
+    } catch {}
+  }
+
+  function jobDetail(job) {
+    const box = document.createElement("div");
+    box.className = "vp-job-detail";
+    if (job.summary) {
+      const s = document.createElement("div");
+      s.className = "vp-job-summary";
+      s.textContent = job.summary;
+      box.appendChild(s);
+    }
+    const meta = [];
+    if (job.workItemId) meta.push(`work item ${job.workItemId}`);
+    if (job.refinery) meta.push(`refinery ${job.refinery}`);
+    if (job.branch) meta.push(job.branch);
+    if (meta.length) {
+      const m = document.createElement("div");
+      m.className = "vp-job-meta";
+      m.textContent = meta.join(" · ");
+      box.appendChild(m);
+    }
+    if (job.trailCommentUrl) {
+      const a = document.createElement("a");
+      a.className = "vp-link";
+      a.href = job.trailCommentUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "see the comment on the PR →";
+      box.appendChild(a);
+    }
+    const jump = document.createElement("button");
+    jump.className = "vp-secondary vp-job-jumpbtn";
+    jump.textContent = "↗ Open this PR";
+    jump.addEventListener("click", (e) => {
+      e.stopPropagation();
+      jumpTo(job);
+    });
+    box.appendChild(jump);
+    return box;
+  }
+
+  function renderTray(map) {
+    const jobsArr = Object.values(map || {})
+      .filter((j) => j && j.prUrl && j.prUrl !== prUrl)
+      .sort((a, b) => {
+        const ra = isActive(a.status) ? 0 : 1;
+        const rb = isActive(b.status) ? 0 : 1;
+        return ra - rb || (b.updatedAt || 0) - (a.updatedAt || 0);
+      });
+    const activeCount = jobsArr.filter((j) => isActive(j.status)).length;
+
+    pillBadge.hidden = activeCount === 0;
+    pillBadge.textContent = activeCount ? String(activeCount) : "";
+
+    if (!jobsArr.length) {
+      trayEl.hidden = true;
+      trayEl.innerHTML = "";
+      return;
+    }
+    trayEl.hidden = false;
+    trayEl.innerHTML = "";
+
+    const head = document.createElement("button");
+    head.className = "vp-tray-head";
+    head.setAttribute("aria-expanded", String(!trayCollapsed));
+    head.innerHTML =
+      `<span class="vp-tray-caret">${trayCollapsed ? "▸" : "▾"}</span>` +
+      `<span class="vp-tray-title">Background work</span>` +
+      `<span class="vp-tray-count">${jobsArr.length}${activeCount ? ` · ${activeCount} active` : ""}</span>`;
+    head.addEventListener("click", () => {
+      trayCollapsed = !trayCollapsed;
+      renderTray(map);
+    });
+    trayEl.appendChild(head);
+    if (trayCollapsed) return;
+
+    const list = document.createElement("div");
+    list.className = "vp-tray-list";
+    for (const job of jobsArr) {
+      const row = document.createElement("div");
+      row.className = `vp-job ${job.status || ""}`;
+
+      const headBtn = document.createElement("button");
+      headBtn.className = "vp-job-head";
+      const dot = document.createElement("span");
+      dot.className = "vp-job-dot";
+      const pr = document.createElement("span");
+      pr.className = "vp-job-pr";
+      pr.textContent = job.prNumber ? `PR #${job.prNumber}` : (job.repo || "PR");
+      const label = document.createElement("span");
+      label.className = "vp-job-label" + (job.status === "running" ? " running" : "");
+      label.textContent = job.label || STATUS_TEXT[job.status] || "…";
+      headBtn.append(dot, pr, label);
+      headBtn.title = job.repo ? `${job.repo} #${job.prNumber} — ${STATUS_TEXT[job.status] || ""}` : "";
+      headBtn.addEventListener("click", () => {
+        if (trayExpanded.has(job.prUrl)) trayExpanded.delete(job.prUrl);
+        else trayExpanded.add(job.prUrl);
+        renderTray(map);
+      });
+      row.appendChild(headBtn);
+
+      const jumpBtn = document.createElement("button");
+      jumpBtn.className = "vp-icon vp-job-jump";
+      jumpBtn.title = "Jump to this PR";
+      jumpBtn.textContent = "↗";
+      jumpBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        jumpTo(job);
+      });
+      row.appendChild(jumpBtn);
+
+      if (!isActive(job.status)) {
+        const x = document.createElement("button");
+        x.className = "vp-icon vp-job-x";
+        x.title = "Dismiss";
+        x.textContent = "✕";
+        x.addEventListener("click", (e) => {
+          e.stopPropagation();
+          dismiss(job);
+        });
+        row.appendChild(x);
+      }
+
+      list.appendChild(row);
+      if (trayExpanded.has(job.prUrl)) list.appendChild(jobDetail(job));
+    }
+    trayEl.appendChild(list);
+  }
+
+  function refreshTray() {
+    try {
+      chrome.storage?.local?.get(JOBS_KEY, (o) => renderTray(o?.[JOBS_KEY] || {}));
+    } catch {}
+  }
+  try {
+    chrome.storage?.onChanged?.addListener((changes, area) => {
+      if (area === "local" && changes[JOBS_KEY]) renderTray(changes[JOBS_KEY].newValue || {});
+    });
+  } catch {}
+  refreshTray();
 
   // ---------- recover an un-dispatched recording after a refresh/crash --------
   // On load, if a previous dispatch never confirmed, surface it: the audio +

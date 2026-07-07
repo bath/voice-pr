@@ -61,6 +61,88 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 .vp-pill:hover { filter: brightness(1.08); }
+/* count of active background jobs on other PRs — awareness while collapsed */
+.vp-pill-badge {
+  display: inline-grid; place-items: center;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: var(--vp-warn); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 1;
+}
+
+/* ---- cross-PR background-work tray ---------------------------------------- */
+.vp-tray {
+  display: flex; flex-direction: column;
+  border-bottom: 1px solid var(--vp-border-soft);
+  background: var(--vp-canvas);
+}
+.vp-tray-head {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 10px; border: 0; background: transparent;
+  color: var(--vp-muted); font: inherit; font-size: 11px; cursor: pointer;
+  text-transform: uppercase; letter-spacing: 0.04em; font-weight: 600;
+}
+.vp-tray-head:hover { color: var(--vp-text); }
+.vp-tray-caret { flex: none; width: 10px; color: var(--vp-faint); }
+.vp-tray-title { flex: none; }
+.vp-tray-count {
+  margin-left: auto; text-transform: none; letter-spacing: 0;
+  font-weight: 500; color: var(--vp-faint);
+}
+.vp-tray-list {
+  display: flex; flex-direction: column;
+  max-height: 208px; overflow-y: auto;
+  padding: 0 6px 6px;
+}
+.vp-job {
+  display: flex; align-items: center; gap: 4px;
+  border-radius: 8px;
+}
+.vp-job:hover { background: var(--vp-subtle); }
+.vp-job-head {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 6px; border: 0; background: transparent;
+  color: var(--vp-text); font: inherit; text-align: left; cursor: pointer;
+}
+.vp-job-dot {
+  flex: none; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--vp-faint);
+}
+.vp-job.queued .vp-job-dot { background: var(--vp-amber); }
+.vp-job.running .vp-job-dot { background: var(--vp-accent); animation: vp-pulse-dot 1.6s infinite; }
+.vp-job.done .vp-job-dot { background: var(--vp-ok); }
+.vp-job.failed .vp-job-dot,
+.vp-job.error .vp-job-dot { background: var(--vp-warn); }
+.vp-job-pr {
+  flex: none; font-family: var(--vp-mono); font-size: 11.5px; font-weight: 600;
+  color: var(--vp-text);
+}
+.vp-job-label {
+  min-width: 0; flex: 1;
+  font-size: 12px; color: var(--vp-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vp-job-label.running {
+  background: linear-gradient(90deg, var(--vp-accent) 30%, #cbe0ff 50%, var(--vp-accent) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: vp-shimmer 1.6s linear infinite;
+}
+.vp-job-jump, .vp-job-x { width: 24px; height: 24px; font-size: 13px; }
+.vp-job-detail {
+  display: flex; flex-direction: column; gap: 6px;
+  margin: 0 6px 6px; padding: 8px 10px;
+  border: 1px solid var(--vp-border-soft); border-radius: 8px;
+  background: var(--vp-panel);
+}
+.vp-job-summary { font-size: 12px; color: var(--vp-text); line-height: 1.45; }
+.vp-job-meta { font-family: var(--vp-mono); font-size: 11px; color: var(--vp-muted); }
+.vp-job-jumpbtn { align-self: flex-start; padding: 6px 10px; }
+@keyframes vp-pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
 
 /* ---- panel shell ---------------------------------------------------------- */
 .vp-panel {
