@@ -154,9 +154,9 @@ const STAGE_TEXT = {
   // orchestrator backend
   "project-ready": (d) => `repo registered with the orchestrator (${d.path})`,
   "work-filed": (d) => `filed work item ${d.id} into the orchestrator`,
-  dispatching: (d) => `nudging the mayor to dispatch work item ${d.id}…`,
+  dispatching: (d) => `mailed the mayor to dispatch work item ${d.id}…`,
   "work-status": (d) => `work item ${d.id}: ${d.status}`,
-  "re-nudged": (d) => `mayor was slow — re-nudged for ${d.id}`,
+  "re-signaled": (d) => `mayor was slow — re-mailed dispatch-ready for ${d.id}`,
   refinery: (d) => `refinery: ${d.status}`,
 };
 

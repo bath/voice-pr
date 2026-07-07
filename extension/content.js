@@ -662,9 +662,9 @@
       }`,
     "project-ready": () => `repo registered with the orchestrator`,
     "work-filed": (d) => `filed work item ${d.id}`,
-    dispatching: (d) => `nudging the mayor to dispatch ${d.id}…`,
+    dispatching: (d) => `mailed the mayor to dispatch ${d.id}…`,
     "work-status": (d) => `work item ${d.id}: ${d.status}`,
-    "re-nudged": (d) => `re-nudged the mayor for ${d.id}`,
+    "re-signaled": (d) => `re-mailed dispatch-ready to the mayor for ${d.id}`,
     refinery: (d) => `refinery: ${d.status}`,
     commenting: () => `posting the intent trail on the PR…`,
   };
