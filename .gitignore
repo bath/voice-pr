@@ -1,3 +1,16 @@
 .DS_Store
 node_modules/
 *.log
+
+# Voice session fixtures — real audio recordings + spoken transcripts.
+# Keep LOCAL only; this repo is public. Never commit/publish.
+.voice-pr/
+sessions/
+*.webm
+*.wav
+*.mp4
+*.m4a
+*.ogg
+*.opus
+transcript.json
+session.json
