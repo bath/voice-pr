@@ -32,6 +32,12 @@ the worker (extension context, covered by `host_permissions`). Verified live in
 Chrome — injection, viewport anchoring on GitHub's real diff DOM, the context
 call, and session streaming all exercised end-to-end.
 
+The worker is also the **cross-tab coordinator**: it owns one shared job registry
+(`chrome.storage.local['voicepr:jobs']`) that every PR tab's *Background work*
+tray reads, so dispatched work is visible from any PR — and since the worker (not
+the tab) drives the dispatch and writes the registry, a run reaches its result
+even if the tab that started it was closed.
+
 ## The design (decided in a grill-me session)
 
 | Decision | Choice |
@@ -64,8 +70,22 @@ node server.js                      # → http://localhost:4100
    `file:line` it anchored to. (First time, Chrome asks for mic permission on
    github.com. No mic / not Chrome? Type comments into the box instead — same
    result.)
-5. **Hand to orchestrator →**. Close the tab if you want; the PR updates in a
-   few minutes. The panel also streams live progress and links the result.
+5. **Dispatch →**. Close the tab if you want; the PR updates in a few minutes.
+   The panel also streams live progress and links the result.
+6. **Reviewing several PRs at once?** Every PR tab shares one **Background work**
+   tray (in the panel, under the context chips). Dispatch on PR #4, tab over to
+   PR #5, and #4's run keeps streaming there — status, the agent's result when it
+   lands (summary · work item · intent-trail link), and a **↗** button that jumps
+   back to that PR's tab. A count badge on the pill flags active work even with
+   the panel closed. Nothing to configure — it's shared automatically across
+   every open PR tab, and a run finishes (and shows its result) even if you
+   closed the tab that started it.
+
+> **Updating an already-loaded extension.** After you pull new code, go to
+> `chrome://extensions` and click **Reload** (↻) on voice-pr. This version adds
+> the **`tabs`** permission (so the tray's *jump to PR* can focus the right tab),
+> so Chrome will show a one-time "voice-pr has new permissions" prompt — **accept
+> it** or jump won't work. No reinstall, no re-granting mic access.
 
 Experimental gaze runs WebGazer inside a transparent `chrome-extension://`
 overlay, not in the GitHub content-script world. That keeps webcam permission
