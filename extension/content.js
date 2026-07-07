@@ -31,16 +31,17 @@
     attentionTimer = null,
     hudFeed = [];
   const HUD_FEED_MAX = 8;
-  // Passive attention signals — mouse-hover (move/dwell) and scroll (viewport
-  // sampling/scroll-pause/revisit). Off by default: they fire constantly and
-  // anchor spoken comments to wherever the pointer/viewport drifted, which the
-  // orchestrator then misreads as intended context. Only the explicit signals
-  // (click/select/copy + live selection) stay on. Toggle in the panel header.
-  const PASSIVE_SRCS = new Set(["move", "dwell", "scroll", "scroll-pause", "revisit"]);
-  let passiveOn = localStorage.getItem("voicepr:passive") === "1";
+  // Interaction tracking — every mouse/scroll-derived attention signal: hover
+  // (move/dwell), scroll (viewport sampling/scroll-pause/revisit), and pointer
+  // (click/select/copy). Off by default: they fire constantly and anchor spoken
+  // comments to wherever the pointer/viewport drifted, which the orchestrator
+  // then misreads as intended context. When off, your voice drives the review
+  // and the viewport is the only fallback anchor. Single toggle in the header.
+  const TRACKED_SRCS = new Set(["move", "dwell", "scroll", "scroll-pause", "revisit", "click", "select", "copy"]);
+  let trackOn = localStorage.getItem("voicepr:tracking") === "1";
   function pushTimeline(src = "scroll", anchor) {
     if (!captureOpen || !sessionStart) return;
-    if (!passiveOn && PASSIVE_SRCS.has(src)) return;
+    if (!trackOn && TRACKED_SRCS.has(src)) return;
     const a = anchor || anchorNow();
     timeline.push({ t: Date.now() - sessionStart, src, ...a });
     debugLine(a, src);
@@ -81,18 +82,20 @@
     };
   }
   document.addEventListener("mouseup", () => {
+    if (!trackOn) return; // pointer tracking is opt-in
     const s = selAnchor();
     if (s) lastSel = { ...s, ts: Date.now() };
     pushTimeline(s ? "select" : "click");
   });
   document.addEventListener("mousedown", (e) => {
+    if (!trackOn) return; // pointer tracking is opt-in
     const file = fileOf(e.target),
       line = lineOf(e.target);
     if (file && line != null) lastClick = { file, line, ts: Date.now() };
     pushTimeline("click");
   });
   document.addEventListener("copy", () => {
-    if (!captureOpen) return;
+    if (!captureOpen || !trackOn) return;
     const s = selAnchor();
     if (s) pushTimeline("copy", s);
   });
@@ -128,7 +131,7 @@
     moveThrottle = 0,
     dwellTimer = null;
   document.addEventListener("mousemove", (e) => {
-    if (!captureOpen || !passiveOn) return; // hover tracking is opt-in
+    if (!captureOpen || !trackOn) return; // hover tracking is opt-in
     const now = Date.now();
     laserPaint(e.clientX, e.clientY);
     if (now - moveThrottle < 120) return;
@@ -157,7 +160,7 @@
   // (which don't bubble "scroll") are still caught.
   let scrollPauseTimer = null;
   function onScroll() {
-    if (!captureOpen || !passiveOn) return; // scroll tracking is opt-in
+    if (!captureOpen || !trackOn) return; // scroll tracking is opt-in
     clearTimeout(scrollPauseTimer);
     scrollPauseTimer = setTimeout(() => {
       if (!captureOpen) return;
@@ -168,18 +171,22 @@
   window.addEventListener("scroll", onScroll, { passive: true });
   document.addEventListener("scroll", onScroll, { passive: true, capture: true });
 
-  // A live text selection always wins; otherwise take the MOST RECENT signal
-  // among selection / click / pointer-hover (pointing counts as attention).
+  // With tracking on, a live text selection always wins; otherwise take the MOST
+  // RECENT signal among selection / click / pointer-hover (pointing counts as
+  // attention). With tracking off, the viewport is the only anchor — the mouse
+  // never steers where a spoken comment lands.
   function anchorNow() {
-    const live = selAnchor();
-    if (live) return { ...live, via: "select" };
-    const cands = [lastSel, lastClick, lastHover].filter(
-      (x) => x && Date.now() - x.ts < (x === lastHover ? 4000 : 12000)
-    );
-    if (cands.length) {
-      const c = cands.sort((a, b) => b.ts - a.ts)[0];
-      const via = c === lastClick ? "click" : c === lastHover ? "hover" : "select";
-      return { file: c.file, line: c.line, endLine: c.endLine, snippet: c.snippet, token: c.token, via };
+    if (trackOn) {
+      const live = selAnchor();
+      if (live) return { ...live, via: "select" };
+      const cands = [lastSel, lastClick, lastHover].filter(
+        (x) => x && Date.now() - x.ts < (x === lastHover ? 4000 : 12000)
+      );
+      if (cands.length) {
+        const c = cands.sort((a, b) => b.ts - a.ts)[0];
+        const via = c === lastClick ? "click" : c === lastHover ? "hover" : "select";
+        return { file: c.file, line: c.line, endLine: c.endLine, snippet: c.snippet, token: c.token, via };
+      }
     }
     return { ...anchorViewport(), via: "viewport" };
   }
@@ -198,7 +205,7 @@
       <div class="vp-head">
         <span class="vp-title">🎙️ voice-pr</span>
         <span class="vp-head-right">
-          <button id="vp-passive-btn" class="vp-dbg" title="track mouse-hover + scroll as attention signals (off by default — noisy, can misanchor your comments)">🖱️ hover+scroll</button>
+          <button id="vp-track-btn" class="vp-dbg" title="track mouse + scroll as attention signals — hover, scroll, click, select, copy (off by default; keeps spoken comments from being misanchored to pointer/scroll drift)">🖱️ tracking</button>
           <button id="vp-gaze-btn" class="vp-dbg" title="experimental: on-device webcam eye tracking (video never leaves your machine)">👁 gaze</button>
           <button id="vp-preflight-btn" class="vp-dbg" title="end-to-end check: bridge → whisper → gh → orchestrator, before you record" hidden>✓ check</button>
           <button id="vp-debug-btn" class="vp-dbg" title="show what's being captured as you talk">🐛 debug</button>
@@ -258,7 +265,7 @@
     debugEl = $("#vp-debug"),
     debugBtn = $("#vp-debug-btn"),
     preflightBtn = $("#vp-preflight-btn"),
-    passiveBtn = $("#vp-passive-btn"),
+    trackBtn = $("#vp-track-btn"),
     gazeBtn = $("#vp-gaze-btn"),
     toggleBtn = $("#vp-toggle"),
     sendBtn = $("#vp-send"),
@@ -451,17 +458,19 @@
   });
   applyDebug();
 
-  // ---------- hover + scroll tracking toggle (off by default) -----------------
-  function applyPassive() {
-    passiveBtn.classList.toggle("on", passiveOn);
+  // ---------- interaction tracking toggle (off by default) --------------------
+  // One switch for all mouse/scroll attention signals (hover, scroll, click,
+  // select, copy). Off = voice-only, viewport is the sole anchor.
+  function applyTrack() {
+    trackBtn.classList.toggle("on", trackOn);
   }
-  passiveBtn.addEventListener("click", () => {
-    passiveOn = !passiveOn;
-    localStorage.setItem("voicepr:passive", passiveOn ? "1" : "0");
-    applyPassive();
-    if (!passiveOn) laser.style.display = "none"; // clear the hover highlight
+  trackBtn.addEventListener("click", () => {
+    trackOn = !trackOn;
+    localStorage.setItem("voicepr:tracking", trackOn ? "1" : "0");
+    applyTrack();
+    if (!trackOn) laser.style.display = "none"; // clear the hover highlight
   });
-  applyPassive();
+  applyTrack();
 
   // ---------- gaze: experimental on-device webcam eye tracking ----------------
   // WebGazer runs in an extension-origin iframe so GitHub's page CSP and camera
