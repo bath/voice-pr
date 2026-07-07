@@ -82,6 +82,68 @@
     };
   }
 
+  // Aggregates per-line attention over a session: how long each file:line sat
+  // near the viewport center (dwell weight) and how many times the user came
+  // back to it (revisit). Pure/testable — content.js ticks it on a timer with
+  // anchorViewport(), the HUD reads topN() for a live "most-attended" list.
+  function attentionKey(anchor) {
+    if (!anchor || !anchor.file || anchor.line == null) return null;
+    return `${anchor.file}:${anchor.line}`;
+  }
+
+  function createAttentionTracker({ now = () => Date.now() } = {}) {
+    const lines = new Map(); // key -> { file, line, weight, visits }
+    let lastKey = null;
+    let lastAt = null;
+
+    function tick(anchor) {
+      const t = now();
+      const key = attentionKey(anchor);
+
+      if (lastKey && lastAt != null) {
+        const dt = t - lastAt;
+        if (dt > 0 && dt < 15000) {
+          const prev = lines.get(lastKey);
+          if (prev) prev.weight += dt;
+        }
+      }
+      lastAt = t;
+
+      let revisit = false;
+      if (key) {
+        let entry = lines.get(key);
+        if (!entry) {
+          entry = { file: anchor.file, line: anchor.line, weight: 0, visits: 1 };
+          lines.set(key, entry);
+        } else if (key !== lastKey) {
+          entry.visits += 1;
+          revisit = true;
+        }
+      }
+      lastKey = key;
+      return { key, revisit };
+    }
+
+    function weightOf(anchor) {
+      return lines.get(attentionKey(anchor))?.weight ?? 0;
+    }
+
+    function topN(n = 5) {
+      return [...lines.values()]
+        .sort((a, b) => b.weight - a.weight || b.visits - a.visits)
+        .slice(0, n)
+        .map((entry) => ({ ...entry }));
+    }
+
+    function reset() {
+      lines.clear();
+      lastKey = null;
+      lastAt = null;
+    }
+
+    return { tick, weightOf, topN, reset };
+  }
+
   function createAnchorResolver(doc = global.document, win = global.window || global) {
     const all = (selector, root = doc) => Array.from(root?.querySelectorAll?.(selector) || []);
 
@@ -238,5 +300,6 @@
     parseDiffAnchorId,
     createAnchorResolver,
     createTimelineClock,
+    createAttentionTracker,
   };
 })(globalThis);

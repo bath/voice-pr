@@ -184,3 +184,57 @@ test("timeline clock captures only while a session is open", async () => {
   assert.equal(clock.push("move", { file: "ignored.js" }), null);
 });
 
+test("attention tracker accumulates dwell weight for the anchor since the previous tick", async () => {
+  const { createAttentionTracker } = await loadAnchors();
+  let now = 0;
+  const attention = createAttentionTracker({ now: () => now });
+
+  attention.tick({ file: "src/App.jsx", line: 10 });
+  now += 500;
+  attention.tick({ file: "src/App.jsx", line: 10 });
+  now += 300;
+  attention.tick({ file: "src/Other.jsx", line: 2 });
+
+  assert.equal(attention.weightOf({ file: "src/App.jsx", line: 10 }), 800);
+  assert.equal(attention.weightOf({ file: "src/Other.jsx", line: 2 }), 0);
+});
+
+test("attention tracker flags revisits and ranks topN by weight", async () => {
+  const { createAttentionTracker } = await loadAnchors();
+  let now = 0;
+  const attention = createAttentionTracker({ now: () => now });
+  const a = { file: "src/App.jsx", line: 10 };
+  const b = { file: "src/Other.jsx", line: 2 };
+
+  assert.equal(attention.tick(a).revisit, false);
+  now += 1000;
+  assert.equal(attention.tick(b).revisit, false);
+  now += 100;
+  assert.equal(attention.tick(b).revisit, false); // same key as last tick, not a return
+  now += 200;
+  assert.equal(attention.tick(a).revisit, true); // returning to a previously-seen line
+
+  const top = attention.topN(2);
+  assert.equal(top[0].file, "src/App.jsx");
+  assert.equal(top[0].line, 10);
+  assert.equal(top[0].weight, 1000);
+  assert.equal(top[0].visits, 2);
+  assert.equal(top[1].visits, 1);
+});
+
+test("attention tracker reset clears weights and revisit history", async () => {
+  const { createAttentionTracker } = await loadAnchors();
+  let now = 0;
+  const attention = createAttentionTracker({ now: () => now });
+  const a = { file: "src/App.jsx", line: 10 };
+
+  attention.tick(a);
+  now += 500;
+  attention.tick(a);
+  attention.reset();
+
+  assert.equal(attention.weightOf(a), 0);
+  assert.deepEqual(plain(attention.topN()), []);
+  assert.equal(attention.tick(a).revisit, false); // fresh session, not a return
+});
+
