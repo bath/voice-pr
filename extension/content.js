@@ -440,11 +440,9 @@
   }
   function resetUI() {
     statusEl.innerHTML = "";
-    statusEl.classList.remove("pipe");
     pipe = null;
-    clearTimeout(readyHideTimer);
-    readyEl.hidden = true;
-    readyEl.innerHTML = "";
+    // reserve the banner slot immediately (no empty → pop-in on open)
+    setReady("checking", "Checking you can record & submit…");
     lookingEl.textContent = "";
     debugEl.innerHTML = "";
     setContextChips();
@@ -502,9 +500,9 @@
   // It answers one question before you invest time talking: can this session
   // actually record and submit? Green auto-collapses; a problem stays put with a
   // Recheck button. Dev view additionally renders the per-check breakdown below.
-  let readyHideTimer = null;
+  // The banner keeps a fixed slot the whole time the panel is open (no
+  // appear/collapse), so its state changes in place without moving anything.
   function setReady(state, text, opts = {}) {
-    clearTimeout(readyHideTimer);
     readyEl.hidden = false;
     readyEl.className = `vp-ready ${state}`;
     readyEl.innerHTML = "";
@@ -519,7 +517,6 @@
       b.addEventListener("click", () => runPreflight());
       readyEl.appendChild(b);
     }
-    if (state === "ok") readyHideTimer = setTimeout(() => (readyEl.hidden = true), 4000);
   }
 
   async function runPreflight() {
@@ -1002,7 +999,6 @@
   let pipe = null; // active pipeline controller (null until dispatch)
   function renderPipeline() {
     statusEl.innerHTML = "";
-    statusEl.classList.add("pipe"); // fixed size — show every step, no inner scroll
     const wrap = document.createElement("div");
     wrap.className = "vp-pipeline";
     const rows = new Map();

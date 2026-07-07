@@ -65,7 +65,10 @@
 /* ---- panel shell ---------------------------------------------------------- */
 .vp-panel {
   width: 344px;
-  max-height: 80vh;
+  /* Fixed drawer size on open — every section has a reserved slot below, so
+     content loading in never grows the panel or shifts the controls. The panel
+     is bottom-anchored, so any growth would push the control bar UP mid-aim. */
+  height: min(600px, 82vh);
   display: flex;
   flex-direction: column;
   background: var(--vp-panel);
@@ -157,6 +160,8 @@
 /* ---- context strip: chips (badges) --------------------------------------- */
 .vp-context {
   display: flex; flex-wrap: wrap; gap: 6px;
+  align-content: flex-start;
+  min-height: 66px; /* reserve 2 chip rows so loading → full never grows */
   padding: 9px 10px;
   border-bottom: 1px solid var(--vp-border-soft);
 }
@@ -185,6 +190,7 @@
 .vp-ready {
   display: flex; align-items: center; gap: 8px;
   margin: 8px 12px 0; padding: 7px 10px;
+  min-height: 48px; /* reserved slot — stays put through checking → ready/warn */
   border-radius: 8px; font-size: 12px; line-height: 1.4;
   border: 1px solid var(--vp-border-soft);
 }
@@ -213,9 +219,8 @@
 
 /* the log feed — anchors captured while recording, then dispatch progress */
 .vp-log {
-  flex: 1;
+  flex: 1; /* fills the fixed drawer; scrolls internally instead of growing it */
   min-height: 96px;
-  max-height: 260px;
   overflow-y: auto;
   padding: 4px 12px 10px;
   display: flex; flex-direction: column; gap: 3px;
@@ -285,7 +290,6 @@
 .vp-secondary:hover { background: var(--vp-subtle); color: var(--vp-text); }
 
 /* ---- dispatch pipeline: a fixed checklist that flips in place ------------- */
-.vp-log.pipe { max-height: none; overflow: visible; } /* show every step, no inner scroll */
 .vp-pipeline { display: flex; flex-direction: column; gap: 1px; padding: 2px 0 4px; }
 .vp-step {
   display: flex; align-items: center; gap: 9px;
