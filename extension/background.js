@@ -22,6 +22,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         audioB64: msg.audioB64,
         ext: msg.ext,
         timeline: msg.timeline,
+        audioStartMs: msg.audioStartMs,
         sessionId: msg.sessionId,
         prUrl: msg.prUrl,
       }),

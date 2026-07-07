@@ -58,7 +58,7 @@ const server = createServer(async (req, res) => {
 async function handleDispatch(req, res) {
   const body = await readBody(req);
   const input = JSON.parse(body || "{}");
-  const { prRef, sessionId, audioB64, ext = "webm", timeline = [], typedSegments = [] } = input;
+  const { prRef, sessionId, audioB64, ext = "webm", timeline = [], audioStartMs = 0, typedSegments = [] } = input;
 
   res.writeHead(200, {
     "content-type": "application/x-ndjson",
@@ -80,7 +80,7 @@ async function handleDispatch(req, res) {
       send("transcribing", {});
       const audio = Buffer.from(audioB64, "base64");
       const raw = await transcribe(audio, ext);
-      const anchored = anchorSegments(raw, timeline);
+      const anchored = anchorSegments(raw, timeline, { offsetMs: audioStartMs });
       if (sessionId) {
         await saveAudio(sessionId, audio, ext);
         await saveJson(sessionId, "transcript.json", {
@@ -120,13 +120,13 @@ async function handleDispatch(req, res) {
 async function handleTranscribe(req, res) {
   try {
     const body = await readBody(req);
-    const { audioB64, ext = "webm", timeline = [], sessionId, prUrl } = JSON.parse(body || "{}");
+    const { audioB64, ext = "webm", timeline = [], audioStartMs = 0, sessionId, prUrl } = JSON.parse(body || "{}");
     if (!audioB64) throw new Error("no audio");
     const audio = Buffer.from(audioB64, "base64");
     console.log(`[transcribe] ${(audio.length / 1024).toFixed(0)}KB ${ext}, ${timeline.length} timeline pts`);
     const t0 = Date.now();
     const segs = await transcribe(audio, ext);
-    const anchored = anchorSegments(segs, timeline);
+    const anchored = anchorSegments(segs, timeline, { offsetMs: audioStartMs });
     console.log(`[transcribe] ${segs.length} segments in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     // archive the recording + transcript as a reusable fixture
     if (sessionId) {
