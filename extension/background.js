@@ -71,7 +71,13 @@ chrome.runtime.onConnect.addListener((port) => {
       }
       port.postMessage({ stage: "_end" });
     } catch (e) {
-      port.postMessage({ stage: "error", detail: { message: String(e) } });
+      // Relay failure (bridge unreachable / crashed): tag it with a code so the
+      // content script's diagnostic report can point an agent at this layer.
+      console.error("[voice-pr] dispatch relay failed:", e);
+      port.postMessage({
+        stage: "error",
+        detail: { message: String(e), code: "background.relay.error", loc: "extension/background.js" },
+      });
       port.postMessage({ stage: "_end" });
     }
   });

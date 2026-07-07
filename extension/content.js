@@ -52,6 +52,70 @@
     if (!recording) paintLooking();
   }
 
+  // ---------- traceability: a per-session trail an AI agent can read ----------
+  // Every meaningful thing the panel does gets one structured record tagged with
+  // the same sessionId that names the recording on disk. Kept in a ring here AND
+  // mirrored to chrome.storage (survives a tab refresh / crash) so a failed
+  // session is always reconstructable. The bridge keeps the authoritative
+  // trace.ndjson server-side; this is the client's vantage point and the source
+  // of the Copy-diagnostic report. Deliberately signal-rich: interactions,
+  // lifecycle, streamed stages, and errors — NOT the per-1.2s scroll anchors
+  // (those are already captured in the timeline and archived).
+  const TRACE_MAX = 200;
+  let traceRing = [];
+  let traceSeq = 0;
+  let lastError = null; // {message, code, loc} — most recent error seen, for the report
+  let persistTimer = null;
+  function persistTrace() {
+    clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      if (!sessionId) return;
+      try { chrome.storage?.local?.set({ [`voicepr:trace:${sessionId}`]: traceRing }); } catch {}
+    }, 1000);
+  }
+  function capDetail(d) {
+    if (!d || typeof d !== "object") return d;
+    const out = {};
+    for (const [k, v] of Object.entries(d))
+      out[k] = typeof v === "string" && v.length > 500 ? v.slice(0, 500) + "…" : v;
+    return out;
+  }
+  function trace(code, detail = {}) {
+    const rec = { seq: traceSeq++, t: Date.now(), sessionId, code, detail: capDetail(detail) };
+    traceRing.push(rec);
+    if (traceRing.length > TRACE_MAX) traceRing.shift();
+    try { console.debug(`[voice-pr] ${code}`, detail); } catch {}
+    persistTrace();
+    return rec;
+  }
+  function traceError(code, message, extra = {}) {
+    lastError = { message: String(message), code: extra.code || code, loc: extra.loc || null };
+    return trace(code, { message: String(message), ...extra });
+  }
+  // Which files each event-code prefix lives in, so the report can point an
+  // agent straight at the code. Mirrors lib/trace.js CODE_MAP + the client side.
+  const EXT_CODE_MAP = {
+    "panel.": "extension/content.js — panel lifecycle",
+    "record.": "extension/content.js — MediaRecorder controls (start/pause/stop)",
+    "dispatch.": "extension/content.js — dispatch click + streaming port; extension/background.js relays it to the bridge",
+    "stage.": "server.js send() + lib/pipeline.js / lib/orchestrator.js emit() — grep the stage name after 'stage.'",
+    "gaze.": "extension/content.js + extension/gaze.js — WebGazer overlay",
+    "preflight.": "server.js runPreflight() — dependency probes",
+    "mic.": "extension/content.js start() — navigator.mediaDevices.getUserMedia",
+    "recover.": "extension/content.js checkPendingOnLoad() — crash recovery",
+    "bridge.": "server.js — HTTP endpoints",
+    "exec.": "lib/exec.js — child processes (gh/git/docker/ffmpeg/whisper)",
+    "pipeline.": "lib/pipeline.js — session → PR → orchestrator submit",
+    "orchestrator.": "lib/orchestrator.js — docker exec into the pogo container",
+  };
+  function areasFor(codes) {
+    const hits = new Set();
+    for (const c of codes)
+      for (const [p, where] of Object.entries(EXT_CODE_MAP)) if (c.startsWith(p)) hits.add(where);
+    if (!hits.size) hits.add("grep the code strings below across server.js, lib/, and extension/");
+    return [...hits];
+  }
+
   // ---------- diff anchoring (view-agnostic) ----------------------------------
   // GitHub tags each diff line with a deep-link id: diff-<filehash>(L|R)<line>
   // (the same scheme in your URL bar), and the file sidebar maps #diff-<hash> to
@@ -466,6 +530,10 @@
     logEmpty("scroll the diff and talk — the file:line you're reading shows up here.");
     sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     sessionStart = Date.now();
+    traceRing = [];
+    traceSeq = 0;
+    lastError = null;
+    trace("panel.open", { pr: prUrl });
     captureOpen = true;
     panel.hidden = false;
     pill.hidden = true;
@@ -484,6 +552,7 @@
     runPreflight(); // validate the whole record→submit chain up front, for everyone
   });
   $("#vp-close").addEventListener("click", () => {
+    trace("panel.close", {});
     teardown(); // closing cancels the current session; reopening starts fresh
     panel.hidden = true;
     pill.hidden = false;
@@ -517,6 +586,9 @@
       b.addEventListener("click", () => runPreflight());
       readyEl.appendChild(b);
     }
+    // Any not-ready banner also offers the Copy-diagnostic report (with the AI
+    // prompt), same as every other error surface.
+    if (opts.copyWhy) readyEl.appendChild(copyErrorButton(opts.copyWhy));
   }
 
   async function runPreflight() {
@@ -528,18 +600,22 @@
       resp = { ok: false, error: String(e) };
     }
     if (!resp || !resp.ok || !resp.json) {
+      traceError("preflight.unreachable", resp?.error || "bridge not reachable");
       setReady("warn", "Bridge not reachable — start it with `npm run serve`. You can record, but dispatch will fail.", {
         recheck: true,
+        copyWhy: "preflight failed — bridge not reachable",
       });
     } else if (resp.json.ok) {
+      trace("preflight.done", { ok: true });
       setReady("ok", "Ready — bridge, Whisper, GitHub & orchestrator all good.");
     } else {
       const failing = resp.json.checks.filter((c) => !c.ok);
       const d = failing[0]?.detail ? ` — ${failing[0].detail}` : "";
+      trace("preflight.done", { ok: false, failing: failing.map((c) => c.name) });
       setReady(
         "warn",
         `Not ready: ${failing.map((c) => c.name).join(", ")}${d}. Fix before recording — dispatch will fail.`,
-        { recheck: true }
+        { recheck: true, copyWhy: "preflight failed — one or more dependencies are down" }
       );
     }
     if (devOn) preflightDetail(resp); // full per-check breakdown, dev only
@@ -634,7 +710,9 @@
     gazeBtn.classList.remove("on");
     gazeDot.style.display = "none";
     if (gazeFrame) gazeFrame.style.display = "none";
+    traceError("gaze.error", message);
     lookingEl.innerHTML = `<span class="vp-warn">gaze unavailable: ${escapeHtml(String(message))}</span>`;
+    lookingEl.appendChild(copyErrorButton(`gaze unavailable: ${message}`));
   }
   window.addEventListener("message", (event) => {
     if (event.origin !== GAZE_ORIGIN || event.source !== gazeFrame?.contentWindow) return;
@@ -659,6 +737,7 @@
     if (msg.kind === "error") showGazeError(msg.message || "failed to start eye tracking");
   });
   async function startGaze() {
+    trace("gaze.start", {});
     gazeBtn.classList.add("on");
     lookingEl.innerHTML = `<span class="vp-dim">👁 starting eye tracking (on-device)… allow the camera, then look around the diff to calibrate</span>`;
     try {
@@ -670,6 +749,7 @@
     }
   }
   function stopGaze() {
+    trace("gaze.stop", {});
     gazeOn = false;
     gazeBtn.classList.remove("on");
     gazeDot.style.display = "none";
@@ -744,8 +824,10 @@
     if (recording || mediaRecorder) return;
     try {
       mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch {
+    } catch (e) {
+      traceError("mic.blocked", e?.message || "getUserMedia denied");
       lookingEl.innerHTML = `<span class="vp-warn">mic blocked — allow it (🔒 in the address bar), then reopen the panel</span>`;
+      lookingEl.appendChild(copyErrorButton("microphone blocked (getUserMedia denied)"));
       sendBtn.disabled = false; // can still dispatch typed comments
       return;
     }
@@ -756,6 +838,7 @@
     if (!sessionStart) sessionStart = recStart;
     audioStartMs = recStart - sessionStart;
     pushTimeline("record-start");
+    trace("record.start", { audioStartMs });
     logRow("● recording started", { cls: "milestone", ts: 0 });
     sendBtn.disabled = false; // Dispatch is live the entire time
     toggleBtn.textContent = "⏸";
@@ -786,6 +869,7 @@
       toggleBtn.textContent = "⏵";
       toggleBtn.title = "Resume recording";
       toggleBtn.classList.remove("vp-recording");
+      trace("record.pause", { ms: Date.now() - recStart });
       logRow("❚❚ paused", { cls: "milestone", ts: Date.now() - recStart });
     } else {
       paused = false;
@@ -795,6 +879,7 @@
       toggleBtn.textContent = "⏸";
       toggleBtn.title = "Pause recording";
       toggleBtn.classList.add("vp-recording");
+      trace("record.resume", { ms: Date.now() - recStart });
       logRow("● resumed", { cls: "milestone", ts: Date.now() - recStart });
     }
     updateClock();
@@ -850,8 +935,10 @@
     try {
       const port = chrome.runtime.connect({ name: "dispatch" });
       activePort = port;
+      trace("dispatch.send", { hasAudio: !!bundle.audioB64, typed: bundle.typedSegments?.length || 0 });
       port.onMessage.addListener((ev) => {
         if (ev.stage === "_end") {
+          trace("dispatch.port-end", { gotResult });
           try { port.disconnect(); } catch {}
           if (!gotResult) offerRetry(bundle, "the bridge closed before finishing — is the voice-pr server up?");
           return;
@@ -890,38 +977,84 @@
       }
     }
   }
-  // A self-contained error report the user can paste straight back for a fix:
-  // the failure + session metadata + the full log feed as shown.
-  function buildErrorReport(why, bundle) {
+  // A self-contained diagnostic report the user can paste straight to an AI
+  // agent for a fix. It bundles the failure, the correlation id, where the full
+  // server-side logs live on disk, this tab's event trail, AND an explicit AI
+  // prompt telling the agent exactly how to map the error back to the code path.
+  // This is the point of the whole traceability layer: paste it, and an agent
+  // can naively walk from symptom → code → fix.
+  function buildDiagnosticReport(why, bundle) {
     const kb = Math.round(((bundle?.audioB64?.length || 0) * 0.75) / 1024);
-    const log = [...statusEl.querySelectorAll(".vp-logrow")].map((r) => r.textContent.trim()).join("\n");
+    const codes = [...new Set(traceRing.map((r) => r.code))];
+    const err = lastError || {};
+    const trail = traceRing
+      .slice(-40)
+      .map((r) => {
+        const hhmmss = new Date(r.t).toISOString().slice(11, 19);
+        const msg = r.detail && r.detail.message ? ` — ${r.detail.message}` : "";
+        return `${hhmmss}  ${r.code}${msg}`;
+      })
+      .join("\n");
+    const sid = sessionId || "(none — never started a session)";
     return [
-      "voice-pr dispatch error",
+      "===== voice-pr diagnostic report =====",
+      `when:  ${new Date().toISOString()}`,
       `error: ${why}`,
-      `pr: ${prUrl}`,
-      `session: ${sessionId}`,
-      `bridge: ${BRIDGE}`,
-      `timeline events: ${bundle?.timeline?.length ?? timeline.length}, typed: ${bundle?.typedSegments?.length ?? segments.length}${kb ? `, audio ~${kb}KB` : ""}`,
+      err.code ? `origin code: ${err.code}` : null,
+      err.loc ? `origin loc:  ${err.loc}   ← grep the repo for this file:line` : null,
+      "",
+      "--- correlation ---",
+      `session id: ${sid}`,
+      `pr:         ${prUrl}`,
+      `bridge:     ${BRIDGE}`,
+      `events: ${bundle?.timeline?.length ?? timeline.length} timeline, ${bundle?.typedSegments?.length ?? segments.length} typed${kb ? `, audio ~${kb}KB` : ""}`,
       `ua: ${navigator.userAgent}`,
       "",
-      "log:",
-      log || "(empty)",
-    ].join("\n");
+      "--- where the full logs live (local, on the machine running the bridge) ---",
+      `session dir: ~/.voice-pr/sessions/${sid}/   (audio.*, transcript.json, session.json, trace.ndjson)`,
+      `global log:  ~/.voice-pr/bridge.ndjson`,
+      `latest ptr:  ~/.voice-pr/last-session.json`,
+      `quick view:  npm run trace ${sid === "(none — never started a session)" ? "" : sid}   (bare 'npm run trace' opens the most recent session)`,
+      "",
+      "--- this tab's event trail (newest last) ---",
+      trail || "(empty)",
+      "",
+      "===== FOR AN AI AGENT =====",
+      "You are debugging voice-pr: a Chrome extension (extension/) + a local Node bridge (server.js + lib/) that turns spoken GitHub-PR feedback into orchestrator work items. An error above interrupted a session. To find and fix it:",
+      "",
+      `1. Read the authoritative server-side trail: ~/.voice-pr/sessions/${sid}/trace.ndjson  (or run \`npm run trace ${sid === "(none — never started a session)" ? "" : sid}\`). Every line is {seq, t, level, sessionId, code, loc, detail}; the last level:"error" record is the proximate cause and its \`loc\` is the file:line that threw.`,
+      "2. Every `code` in this report is a literal string in the source — grep for it to land on the exact emit site. `loc` pins direct calls precisely; for `stage.*` codes, grep the part after `stage.`.",
+      "3. Given the codes seen this session, the failure is most likely in:",
+      ...areasFor(codes).map((a) => `     - ${a}`),
+      "4. The end-to-end flow, in order — walk it until a step's trace stops matching the happy path:",
+      "     extension/content.js (record → Dispatch click) → extension/background.js (relays to the bridge; content scripts can't hit localhost) → server.js POST /api/dispatch → lib/pipeline.js runSession → lib/orchestrator.js (docker exec into the 'codingagent' pogo container) → lib/exec.js (the real gh/git/docker/ffmpeg/whisper child processes; `exec.fail` records carry the child's stderr — usually the smoking gun).",
+      "5. If nothing in the trail reached a `bridge.*` code, the bridge was never contacted — the fault is client-side (extension/content.js, extension/background.js) or the bridge is down (`npm run serve`).",
+      "6. Report the root cause as code + file:line, then the minimal fix.",
+      "=======================================",
+    ]
+      .filter((x) => x != null)
+      .join("\n");
   }
-  function makeCopyButton(getText, label = "⧉ Copy error") {
+  function makeCopyButton(getText, label = "⧉ Copy diagnostic report") {
     const b = document.createElement("button");
     b.className = "vp-secondary";
     b.textContent = label;
     b.addEventListener("click", async () => {
       const ok = await copyText(getText());
-      b.textContent = ok ? "Copied ✓" : "Copy failed — select the text";
-      setTimeout(() => (b.textContent = label), 1800);
+      b.textContent = ok ? "Copied ✓ — paste to an AI agent" : "Copy failed — select the text";
+      setTimeout(() => (b.textContent = label), 2200);
     });
     return b;
+  }
+  // Append a Copy-diagnostic button to any error surface. `why` is the one-line
+  // failure; the copied report carries the full context + AI prompt.
+  function copyErrorButton(why, bundle) {
+    return makeCopyButton(() => buildDiagnosticReport(why, bundle));
   }
 
   function offerRetry(bundle, why) {
     dispatched = false; // let the user try again without re-recording
+    traceError("dispatch.failed", why);
     const kb = Math.round(((bundle.audioB64?.length || 0) * 0.75) / 1024);
     line(
       `⚠️ dispatch didn't go through (${why}). Your recording is saved${kb ? ` (~${kb}KB audio)` : ""} — nothing lost. Start the bridge (\`npm run serve\`), then retry.`,
@@ -939,7 +1072,7 @@
       sendBundle(bundle);
     });
     wrap.appendChild(btn);
-    wrap.appendChild(makeCopyButton(() => buildErrorReport(why, bundle)));
+    wrap.appendChild(copyErrorButton(why, bundle));
     statusEl.appendChild(wrap);
     statusEl.scrollTop = statusEl.scrollHeight;
   }
@@ -951,6 +1084,7 @@
   sendBtn.addEventListener("click", async () => {
     if (dispatched) return;
     dispatched = true;
+    trace("dispatch.click", { typed: segments.length, timeline: timeline.length });
     // recording is over — clear the red indicator immediately (don't leave a
     // stuck "❚❚ Pause" button).
     recording = false;
@@ -1037,6 +1171,13 @@
 
   function onEvent(ev) {
     const { stage, detail: d = {} } = ev;
+    // Mirror every streamed bridge event into the client trace (the report reads
+    // this even if the server-side trace.ndjson is unavailable). On error, stash
+    // the origin code + loc the bridge forwarded so the Copy-diagnostic report
+    // points straight at the failing code.
+    trace(`stage.${stage}`, d);
+    if (stage === "error")
+      lastError = { message: d.message, code: d.code || "bridge.dispatch.error", loc: d.loc || null };
     if (stage === "result" || stage === "done") return done(d);
     if (stage === "agent-log") return;
     if (!pipe) return; // events are only meaningful once the pipeline is shown
@@ -1150,6 +1291,8 @@
   async function checkPendingOnLoad() {
     const pending = await loadPending();
     if (!pending) return;
+    sessionId = pending.sessionId || sessionId; // tag recovery traces to the recovered session
+    trace("recover.found", { savedAt: pending.savedAt || null, hasAudio: !!pending.audioB64 });
     const kb = Math.round(((pending.audioB64?.length || 0) * 0.75) / 1024);
     const ago = pending.savedAt ? Math.round((Date.now() - pending.savedAt) / 60000) : null;
     captureOpen = false;
@@ -1176,6 +1319,7 @@
       wrap.remove();
       sessionId = pending.sessionId || sessionId;
       dispatched = true;
+      trace("recover.resend", {});
       line("resending recovered recording…");
       sendBundle(pending);
     });
@@ -1183,6 +1327,7 @@
     discard.className = "vp-secondary";
     discard.textContent = "Discard";
     discard.addEventListener("click", () => {
+      trace("recover.discard", {});
       clearPending();
       teardown();
       panel.hidden = true;

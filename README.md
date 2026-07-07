@@ -187,7 +187,8 @@ file, or `ANTHROPIC_API_KEY`). OAuth tokens expire — if the mayor/polecats log
 | `VOICE_PR_DISPATCH_MS` | `720000` | how long to track a work item before returning |
 | `VOICE_PR_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
 | `VOICE_PR_WHISPER_MODEL` | `~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin` | GGML model path |
-| `VOICE_PR_ARCHIVE_DIR` | `~/.voice-pr/sessions` | where session fixtures are saved |
+| `VOICE_PR_ARCHIVE_DIR` | `~/.voice-pr/sessions` | where session fixtures + traces are saved |
+| `VOICE_PR_LOG_MAX_BYTES` | `5000000` | rotate the global `bridge.ndjson` past this size |
 
 ## Session archive (fixtures)
 
@@ -196,9 +197,49 @@ test cases, and examples:
 - `audio.<ext>` — the raw recording
 - `transcript.json` — raw text, anchored segments, whisper segment timestamps, the anchor timeline
 - `session.json` — the dispatched segments, every orchestrator progress event, and the final result
+- `trace.ndjson` — the full structured trace of the session (see below)
 
 The `sessionId` (minted by the extension at record-start) correlates the
 recording, its transcript, and the orchestrator run it produced.
+
+## Traceability (point an AI agent at any session)
+
+Everything the program does — a request, a child process, a stage transition, an
+error — is recorded as one structured NDJSON line so you can hand a failed
+recording to an AI agent and have it walk **symptom → code → fix** with no
+guessing. Just say: _"look at my most recent recording and figure out what
+happened."_
+
+```sh
+npm run trace                 # dump the most recent session, agent-formatted
+npm run trace <sessionId>     # a specific session
+npm run trace --list          # recent sessions, newest first
+npm run trace <id> --json     # raw parsed records
+```
+
+Each record carries:
+- **`sessionId`** — the same id that names the recording on disk, tying audio,
+  transcript, and every downstream event together.
+- **`code`** — a stable dotted event name (e.g. `exec.fail`, `bridge.dispatch.error`).
+  Every code is a **literal string in the source** — `git grep` it and you land on
+  the exact emit site. This is the invariant that makes the trace naively mappable.
+- **`loc`** — `file:line` of the emit call, captured from the stack. For the layer
+  that actually shells out (`lib/exec.js`), `exec.fail` records also carry the
+  child process's stderr — usually the smoking gun.
+
+Where it all lands (local only — nothing is uploaded, and the public repo never
+commits recordings/transcripts/logs):
+- `~/.voice-pr/sessions/<id>/trace.ndjson` — one session's full trace
+- `~/.voice-pr/bridge.ndjson` — global rolling log across sessions
+- `~/.voice-pr/last-session.json` — pointer to the most recent session
+
+Propagation is ambient (`AsyncLocalStorage`): a request opens one trace scope and
+every layer beneath it — the pipeline, the orchestrator, each child process —
+logs to that session automatically. The Chrome panel keeps its own client-side
+trail (in `chrome.storage`, surviving a tab refresh); **any error surfaces a
+"Copy diagnostic report" button** whose clipboard payload includes the failure,
+the correlation id, where the logs live, the event trail, and an explicit prompt
+telling an AI agent exactly how to find the fault in the code.
 
 ## Known MVP limits (next passes)
 
