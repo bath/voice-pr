@@ -68,6 +68,14 @@ node server.js                      # → http://localhost:4100
 5. **Hand to orchestrator →**. Close the tab if you want; the PR updates in a
    few minutes. The panel also streams live progress and links the result.
 
+Experimental gaze runs WebGazer inside a transparent `chrome-extension://`
+overlay, not in the GitHub content-script world. That keeps webcam permission
+and model execution on the extension origin while the content script receives
+only viewport coordinates for diff anchoring. Webcam frames stay local; this PR
+does **not** vendor WebGazer's face-model assets for a fully offline/zero-network
+first run, so the extension CSP and host permissions still allow the current
+WebGazer model hosts (`tfhub.dev`, `kaggle.com`, and `storage.googleapis.com`).
+
 The extension always routes through the **orchestrator** backend, so the bridge
 must be able to reach your pogo container (see below).
 

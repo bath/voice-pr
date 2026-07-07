@@ -237,6 +237,7 @@
     lastHover = null;
     hoverKey = "";
     clearTimeout(dwellTimer);
+    stopGaze();
     laser.style.display = "none";
     gazeDot.style.display = "none";
   }
@@ -296,12 +297,20 @@
   applyDebug();
 
   // ---------- gaze: experimental on-device webcam eye tracking ----------------
-  // WebGazer runs entirely in-browser — webcam frames never leave the machine
-  // (only the face model downloads once from Google). Gaze is just another
-  // timeline source: predictions → anchorAtPoint(x,y) → pushTimeline("gaze").
+  // WebGazer runs in an extension-origin iframe so GitHub's page CSP and camera
+  // origin do not own the webcam/model execution path. The content script only
+  // receives viewport coordinates and maps them onto the PR diff DOM.
+  const GAZE_URL = chrome.runtime.getURL("gaze.html");
+  const GAZE_ORIGIN = new URL(GAZE_URL).origin;
   let gazeOn = false,
     gazeThrottle = 0,
-    gazeKey = "";
+    gazeKey = "",
+    gazeFrame = null,
+    gazeReady = false,
+    gazeReadyPromise = null,
+    gazeReadyResolve = null,
+    gazeReadyReject = null,
+    gazeReadyTimer = null;
   function onGaze(x, y) {
     if (x == null || y == null) return;
     Object.assign(gazeDot.style, { display: "block", left: `${x}px`, top: `${y}px` });
@@ -317,40 +326,83 @@
   }
   // test/injection seam: a synthetic gaze coordinate (real source is WebGazer).
   window.addEventListener("vp-synthetic-gaze", (e) => onGaze(e.detail?.x, e.detail?.y));
+  function ensureGazeFrame() {
+    if (gazeReady) return Promise.resolve();
+    if (gazeReadyPromise) return gazeReadyPromise;
+    gazeFrame = document.createElement("iframe");
+    gazeFrame.id = "vp-gaze-frame";
+    gazeFrame.title = "voice-pr extension-origin gaze tracker";
+    gazeFrame.allow = "camera";
+    gazeFrame.src = GAZE_URL;
+    gazeFrame.style.display = "none";
+    document.documentElement.appendChild(gazeFrame);
+    gazeReadyPromise = new Promise((resolve, reject) => {
+      gazeReadyResolve = resolve;
+      gazeReadyReject = reject;
+      gazeReadyTimer = setTimeout(() => {
+        gazeReadyPromise = null;
+        reject(new Error("gaze overlay did not initialize"));
+      }, 10000);
+    });
+    return gazeReadyPromise;
+  }
+  function postGaze(command, detail = {}) {
+    gazeFrame?.contentWindow?.postMessage({ type: "voice-pr-gaze-command", command, ...detail }, GAZE_ORIGIN);
+  }
+  function showGazeError(message) {
+    gazeOn = false;
+    gazeBtn.classList.remove("on");
+    gazeDot.style.display = "none";
+    if (gazeFrame) gazeFrame.style.display = "none";
+    lookingEl.innerHTML = `<span class="vp-warn">gaze unavailable: ${escapeHtml(String(message))}</span>`;
+  }
+  window.addEventListener("message", (event) => {
+    if (event.origin !== GAZE_ORIGIN || event.source !== gazeFrame?.contentWindow) return;
+    const msg = event.data;
+    if (!msg || msg.type !== "voice-pr-gaze") return;
+    if (msg.kind === "ready") {
+      gazeReady = true;
+      clearTimeout(gazeReadyTimer);
+      gazeReadyResolve?.();
+      return;
+    }
+    if (msg.kind === "prediction") return onGaze(msg.x, msg.y);
+    if (msg.kind === "started") {
+      gazeDot.style.display = "block";
+      lookingEl.innerHTML = `<span class="vp-dim">👁 look at a spot and click it a few times to calibrate — the green dot should start following your eyes</span>`;
+      return;
+    }
+    if (msg.kind === "status" && gazeOn) {
+      lookingEl.innerHTML = `<span class="vp-dim">👁 ${escapeHtml(msg.message || "starting eye tracking")}</span>`;
+      return;
+    }
+    if (msg.kind === "error") showGazeError(msg.message || "failed to start eye tracking");
+  });
   async function startGaze() {
     gazeBtn.classList.add("on");
     lookingEl.innerHTML = `<span class="vp-dim">👁 starting eye tracking (on-device)… allow the camera, then look around the diff to calibrate</span>`;
     try {
-      if (typeof window.webgazer === "undefined") {
-        const res = await new Promise((r) => chrome.runtime.sendMessage({ type: "inject-webgazer" }, r));
-        if (!res?.ok) throw new Error(res?.error || "failed to load webgazer");
-      }
-      const wg = window.webgazer;
-      wg.setGazeListener((data) => data && onGaze(data.x, data.y));
-      // Show WebGazer's own feedback so you can SEE it working + calibrate:
-      // the webcam preview + face mesh confirm tracking; the red dot is its
-      // raw prediction; our green #vp-gazedot is the anchored one.
-      wg.showVideoPreview?.(true);
-      wg.showFaceOverlay?.(true);
-      wg.showFaceFeedbackBox?.(true);
-      wg.showPredictionPoints?.(true);
-      await wg.begin();
-      gazeDot.style.display = "block";
-      lookingEl.innerHTML = `<span class="vp-dim">👁 look at a spot and click it a few times to calibrate — the green dot should start following your eyes</span>`;
+      await ensureGazeFrame();
+      gazeFrame.style.display = "block";
+      postGaze("start");
     } catch (e) {
-      gazeOn = false;
-      gazeBtn.classList.remove("on");
-      lookingEl.innerHTML = `<span class="vp-warn">gaze unavailable: ${escapeHtml(String(e.message || e))}</span>`;
+      showGazeError(e.message || e);
     }
   }
   function stopGaze() {
+    gazeOn = false;
     gazeBtn.classList.remove("on");
     gazeDot.style.display = "none";
-    try { window.webgazer?.pause?.(); } catch {}
+    postGaze("stop");
+    if (gazeFrame) gazeFrame.style.display = "none";
   }
+  document.addEventListener("click", (e) => {
+    if (gazeOn && gazeReady) postGaze("calibrate", { x: e.clientX, y: e.clientY });
+  });
   gazeBtn.addEventListener("click", () => {
-    gazeOn = !gazeOn;
-    gazeOn ? startGaze() : stopGaze();
+    if (gazeOn) return stopGaze();
+    gazeOn = true;
+    startGaze();
   });
 
   // ---------- context chip (via the background worker) ------------------------
