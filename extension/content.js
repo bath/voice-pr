@@ -5,6 +5,7 @@
 (function () {
   const BRIDGE = "http://localhost:4100";
   const anchors = window.VoicePrAnchors.createAnchorResolver(document, window);
+  const attention = window.VoicePrAnchors.createAttentionTracker();
   const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   if (!m) return;
   const prUrl = `${location.origin}/${m[1]}/${m[2]}/pull/${m[3]}`;
@@ -26,12 +27,18 @@
     paused = false,
     dispatched = false,
     stopResolve = null,
-    activePort = null;
+    activePort = null,
+    attentionTimer = null,
+    hudFeed = [];
+  const HUD_FEED_MAX = 8;
   function pushTimeline(src = "scroll", anchor) {
     if (!captureOpen || !sessionStart) return;
     const a = anchor || anchorNow();
     timeline.push({ t: Date.now() - sessionStart, src, ...a });
     debugLine(a, src);
+    hudFeed.unshift({ ts: Date.now(), src, anchor: a });
+    if (hudFeed.length > HUD_FEED_MAX) hudFeed.length = HUD_FEED_MAX;
+    renderHud();
     if (!recording) paintLooking();
   }
 
@@ -75,6 +82,11 @@
       line = lineOf(e.target);
     if (file && line != null) lastClick = { file, line, ts: Date.now() };
     pushTimeline("click");
+  });
+  document.addEventListener("copy", () => {
+    if (!captureOpen) return;
+    const s = selAnchor();
+    if (s) pushTimeline("copy", s);
   });
 
   // The code token/identifier directly under a screen point (the "laser dot").
@@ -131,19 +143,37 @@
     return anchors.anchorViewport();
   }
 
+  // scroll-pause: motion followed by a stop is a strong "landed here" signal —
+  // more meaningful than the constant scroll noise while actively flicking
+  // through the diff. Capture-phase listener so nested diff scroll containers
+  // (which don't bubble "scroll") are still caught.
+  let scrollPauseTimer = null;
+  function onScroll() {
+    if (!captureOpen) return;
+    clearTimeout(scrollPauseTimer);
+    scrollPauseTimer = setTimeout(() => {
+      if (!captureOpen) return;
+      const v = anchorViewport();
+      pushTimeline("scroll-pause", { ...v, via: "viewport", weight: attention.weightOf(v) });
+    }, 260);
+  }
+  window.addEventListener("scroll", onScroll, { passive: true });
+  document.addEventListener("scroll", onScroll, { passive: true, capture: true });
+
   // A live text selection always wins; otherwise take the MOST RECENT signal
   // among selection / click / pointer-hover (pointing counts as attention).
   function anchorNow() {
     const live = selAnchor();
-    if (live) return live;
+    if (live) return { ...live, via: "select" };
     const cands = [lastSel, lastClick, lastHover].filter(
       (x) => x && Date.now() - x.ts < (x === lastHover ? 4000 : 12000)
     );
     if (cands.length) {
       const c = cands.sort((a, b) => b.ts - a.ts)[0];
-      return { file: c.file, line: c.line, endLine: c.endLine, snippet: c.snippet, token: c.token };
+      const via = c === lastClick ? "click" : c === lastHover ? "hover" : "select";
+      return { file: c.file, line: c.line, endLine: c.endLine, snippet: c.snippet, token: c.token, via };
     }
-    return anchorViewport();
+    return { ...anchorViewport(), via: "viewport" };
   }
   function fmtAnchor(a) {
     if (!a || !a.file) return "no target — will infer from words";
@@ -167,6 +197,17 @@
       </div>
       <div id="vp-context" class="vp-context">PR #${m[3]}</div>
       <div id="vp-looking" class="vp-looking"></div>
+      <div id="vp-hud" class="vp-hud" hidden>
+        <div class="vp-hud-current">
+          <span id="vp-hud-pulse" class="vp-pulse"></span>
+          <span id="vp-hud-anchor" class="vp-hud-anchor">—</span>
+        </div>
+        <ol id="vp-hud-feed" class="vp-hud-feed"></ol>
+        <div class="vp-hud-top">
+          <div class="vp-hud-top-label">Most attended</div>
+          <ol id="vp-hud-topn" class="vp-hud-topn"></ol>
+        </div>
+      </div>
       <div id="vp-debug" class="vp-debug" hidden></div>
       <div class="vp-actions">
         <button id="vp-toggle" class="vp-rec">● Record</button>
@@ -209,7 +250,51 @@
     gazeBtn = $("#vp-gaze-btn"),
     toggleBtn = $("#vp-toggle"),
     sendBtn = $("#vp-send"),
-    statusEl = $("#vp-status");
+    statusEl = $("#vp-status"),
+    hudEl = $("#vp-hud"),
+    hudPulseEl = $("#vp-hud-pulse"),
+    hudAnchorEl = $("#vp-hud-anchor"),
+    hudFeedEl = $("#vp-hud-feed"),
+    hudTopEl = $("#vp-hud-topn");
+
+  // ---------- live attention HUD: always visible while a session is open -----
+  const SIGNAL_ICON = {
+    open: "🟢",
+    "record-start": "🔴",
+    click: "🖱️",
+    select: "✂️",
+    move: "➡️",
+    dwell: "⏳",
+    gaze: "👁",
+    scroll: "🕐",
+    "scroll-pause": "🛑",
+    copy: "📋",
+    revisit: "↩️",
+  };
+  function renderHud() {
+    hudEl.hidden = !captureOpen;
+    if (!captureOpen) return;
+    hudPulseEl.classList.toggle("vp-pulse-live", captureOpen);
+    hudAnchorEl.textContent = fmtAnchor(anchorNow());
+
+    hudFeedEl.innerHTML = "";
+    for (const item of hudFeed) {
+      const age = Math.max(0, Math.round((Date.now() - item.ts) / 1000));
+      const li = document.createElement("li");
+      li.className = "vp-hud-row";
+      li.textContent = `${SIGNAL_ICON[item.src] || "•"} ${fmtAnchor(item.anchor)} · ${age}s`;
+      hudFeedEl.appendChild(li);
+    }
+
+    hudTopEl.innerHTML = "";
+    for (const entry of attention.topN(5)) {
+      const li = document.createElement("li");
+      li.className = "vp-hud-row";
+      const secs = Math.round(entry.weight / 1000);
+      li.textContent = `${entry.file}:${entry.line} · ${secs}s${entry.visits > 1 ? ` · ${entry.visits}×` : ""}`;
+      hudTopEl.appendChild(li);
+    }
+  }
 
   // Tear down all in-flight state and return the panel to a clean, fresh-session
   // state. Called on every open so reopening after a send/stop is never janky.
@@ -217,11 +302,14 @@
     try { if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop(); } catch {}
     mediaStream?.getTracks().forEach((t) => t.stop());
     clearInterval(anchorTimer);
+    clearInterval(attentionTimer);
+    clearTimeout(scrollPauseTimer);
     try { activePort?.disconnect(); } catch {}
     mediaRecorder = null;
     mediaStream = null;
     stopResolve = null;
     activePort = null;
+    attentionTimer = null;
     recording = false;
     paused = false;
     dispatched = false;
@@ -236,10 +324,13 @@
     lastClick = null;
     lastHover = null;
     hoverKey = "";
+    hudFeed = [];
+    attention.reset();
     clearTimeout(dwellTimer);
     stopGaze();
     laser.style.display = "none";
     gazeDot.style.display = "none";
+    renderHud();
   }
   function resetUI() {
     statusEl.hidden = true;
@@ -266,6 +357,13 @@
     loadContext();
     paintLooking();
     pushTimeline("open");
+    attentionTimer = setInterval(() => {
+      const v = anchorViewport();
+      const info = attention.tick(v);
+      if (info.revisit) pushTimeline("revisit", { ...v, via: "viewport", weight: attention.weightOf(v) });
+      else renderHud();
+    }, 1000);
+    renderHud();
     start();
   });
   $("#vp-close").addEventListener("click", () => {
@@ -528,6 +626,9 @@
     paused = false;
     captureOpen = false;
     clearInterval(anchorTimer);
+    clearInterval(attentionTimer);
+    clearTimeout(scrollPauseTimer);
+    renderHud();
     toggleBtn.disabled = true;
     toggleBtn.textContent = "● Record";
     toggleBtn.classList.remove("vp-recording");

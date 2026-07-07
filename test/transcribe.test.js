@@ -47,3 +47,21 @@ test("preserves the first timeline anchor as a conservative fallback", () => {
   assert.equal(anchored[0].file, "src/Fallback.jsx");
   assert.equal(anchored[0].line, 7);
 });
+
+test("carries dwell weight and capture source onto segments when present", () => {
+  const anchored = anchorSegments([{ start: 1, text: "this line is slow" }], [
+    { t: 900, file: "src/Hot.jsx", line: 12, weight: 4200, via: "viewport" },
+  ]);
+
+  assert.equal(anchored[0].weight, 4200);
+  assert.equal(anchored[0].via, "viewport");
+});
+
+test("omits weight/via when the source anchor does not carry them (backward compatible)", () => {
+  const anchored = anchorSegments([{ start: 1, text: "plain anchor" }], [
+    { t: 900, file: "src/Plain.jsx", line: 3 },
+  ]);
+
+  assert.equal("weight" in anchored[0], false);
+  assert.equal("via" in anchored[0], false);
+});
