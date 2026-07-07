@@ -5,7 +5,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname } from "node:path";
 import { runBatch, runSession, getContext } from "./lib/pipeline.js";
-import { transcribe, anchorSegments } from "./lib/transcribe.js";
+import { transcribe, anchorSegments, checkStt } from "./lib/transcribe.js";
+import { checkOrchestrator } from "./lib/orchestrator.js";
+import { run } from "./lib/exec.js";
 import { saveAudio, saveJson, ARCHIVE_ROOT } from "./lib/archive.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -36,6 +38,8 @@ const server = createServer(async (req, res) => {
     if (req.method === "OPTIONS") return res.writeHead(204).end();
     if (req.method === "GET" && url.pathname === "/api/context")
       return await handleContext(url, res);
+    if (req.method === "GET" && url.pathname === "/api/preflight")
+      return await handlePreflight(res);
     if (req.method === "POST" && url.pathname === "/api/transcribe")
       return await handleTranscribe(req, res);
     if (req.method === "POST" && url.pathname === "/api/dispatch")
@@ -65,10 +69,17 @@ async function handleDispatch(req, res) {
     "cache-control": "no-cache",
     "x-accel-buffering": "no",
   });
+  // The client (PR tab) can close mid-run — that's the whole point ("close the
+  // tab, work continues"). Swallow the socket error so a dead client can't
+  // bubble an uncaught 'error' and take the whole server down.
+  res.on("error", () => {});
   const t0 = Date.now();
   const events = [];
   const send = (stage, detail) => {
     events.push({ stage, detail, t: Math.round((Date.now() - t0) / 1000) });
+    // Skip the write once the client is gone; keep running so the session still
+    // finishes and archives server-side.
+    if (res.writableEnded || res.destroyed) return;
     res.write(JSON.stringify({ stage, detail, t: Math.round((Date.now() - t0) / 1000) }) + "\n");
   };
 
@@ -149,6 +160,30 @@ async function handleTranscribe(req, res) {
   }
 }
 
+// End-to-end preflight for the debug panel: probe every dependency the dispatch
+// path actually needs, so you can confirm the whole chain is live BEFORE you
+// record. Each check is independent and non-fatal — the report lists what's up
+// and what's not.
+async function handlePreflight(res) {
+  const checks = [{ name: "bridge", ok: true, detail: `listening on :${PORT}` }];
+
+  const stt = await checkStt();
+  checks.push({ name: "ffmpeg", ok: stt.ffmpeg, detail: stt.ffmpeg ? "ok" : stt.detail });
+  checks.push({ name: "whisper", ok: stt.whisper, detail: stt.whisper ? "ok" : stt.detail });
+  checks.push({ name: "whisper model", ok: stt.model, detail: stt.model ? "ok" : stt.detail });
+
+  let gh = { ok: false, detail: "" };
+  try { await run("gh", ["auth", "status"]); gh.ok = true; gh.detail = "authenticated"; }
+  catch (e) { gh.detail = `gh not authenticated (${e.message.split("\n")[0]})`; }
+  checks.push({ name: "gh auth", ok: gh.ok, detail: gh.detail });
+
+  const orch = await checkOrchestrator();
+  checks.push({ name: "orchestrator", ok: orch.ok, detail: orch.detail });
+
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ ok: checks.every((c) => c.ok), checks }));
+}
+
 async function handleContext(url, res) {
   const prRef = url.searchParams.get("pr");
   try {
@@ -184,10 +219,12 @@ async function handleStream(req, res, runner) {
     "cache-control": "no-cache",
     "x-accel-buffering": "no",
   });
+  res.on("error", () => {});
   const t0 = Date.now();
   const events = [];
   const send = (stage, detail) => {
     events.push({ stage, detail, t: Math.round((Date.now() - t0) / 1000) });
+    if (res.writableEnded || res.destroyed) return;
     res.write(JSON.stringify({ stage, detail, t: Math.round((Date.now() - t0) / 1000) }) + "\n");
   };
 
@@ -233,6 +270,27 @@ function readBody(req) {
     req.on("error", reject);
   });
 }
+
+// Fault isolation: a single in-flight session spawns many child processes
+// (docker exec, gh, git, claude) over several minutes. Before, ANY async error
+// with no local catch — a child stdin EPIPE, a broken pipe, a stray rejection —
+// killed the whole process and every other in-flight session with it. Log and
+// stay up instead; the offending request already reports its own error, and the
+// supervisor (scripts/serve.js) is the backstop for a truly fatal state.
+process.on("uncaughtException", (e) => {
+  console.error(`[uncaughtException] ${e?.stack || e}`);
+});
+process.on("unhandledRejection", (e) => {
+  console.error(`[unhandledRejection] ${e?.stack || e}`);
+});
+
+server.on("error", (e) => {
+  if (e?.code === "EADDRINUSE") {
+    console.error(`\n  ✗ port ${PORT} is already in use — is voice-pr already running?\n`);
+    process.exit(1);
+  }
+  console.error(`[server] ${e?.stack || e}`);
+});
 
 server.listen(PORT, () => {
   console.log(`\n  🎙️  voice-pr running → http://localhost:${PORT}\n`);

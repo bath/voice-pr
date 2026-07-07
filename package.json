@@ -9,9 +9,10 @@
   },
   "scripts": {
     "start": "node server.js",
+    "serve": "node scripts/serve.js",
     "demo": "bash scripts/setup-demo-pr.sh",
     "test": "node --test && node scripts/validate-extension-gaze.js",
-    "check": "node --check server.js && node --check public/app.js && node --check extension/anchors.js && node --check extension/content.js && node --check extension/background.js && node --check extension/gaze.js && node --check lib/archive.js && node --check lib/exec.js && node --check lib/github.js && node --check lib/orchestrator.js && node --check lib/prompt.js && node --check lib/pipeline.js && node --check lib/transcribe.js && npm test"
+    "check": "node --check server.js && node --check scripts/serve.js && node --check public/app.js && node --check extension/anchors.js && node --check extension/content.js && node --check extension/background.js && node --check extension/gaze.js && node --check lib/archive.js && node --check lib/exec.js && node --check lib/github.js && node --check lib/orchestrator.js && node --check lib/prompt.js && node --check lib/pipeline.js && node --check lib/transcribe.js && npm test"
   },
   "dependencies": {},
   "engines": {

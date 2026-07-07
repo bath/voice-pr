@@ -191,6 +191,7 @@
         <span class="vp-title">🎙️ voice-pr</span>
         <span class="vp-head-right">
           <button id="vp-gaze-btn" class="vp-dbg" title="experimental: on-device webcam eye tracking (video never leaves your machine)">👁 gaze</button>
+          <button id="vp-preflight-btn" class="vp-dbg" title="end-to-end check: bridge → whisper → gh → orchestrator, before you record" hidden>✓ check</button>
           <button id="vp-debug-btn" class="vp-dbg" title="show what's being captured as you talk">🐛 debug</button>
           <button id="vp-close" class="vp-x">✕</button>
         </span>
@@ -247,6 +248,7 @@
     lookingEl = $("#vp-looking"),
     debugEl = $("#vp-debug"),
     debugBtn = $("#vp-debug-btn"),
+    preflightBtn = $("#vp-preflight-btn"),
     gazeBtn = $("#vp-gaze-btn"),
     toggleBtn = $("#vp-toggle"),
     sendBtn = $("#vp-send"),
@@ -365,6 +367,7 @@
     }, 1000);
     renderHud();
     start();
+    if (debugOn) runPreflight(); // opened with debug on → verify the chain
   });
   $("#vp-close").addEventListener("click", () => {
     teardown(); // closing cancels the current session; reopening starts fresh
@@ -377,7 +380,50 @@
   function applyDebug() {
     debugEl.hidden = !debugOn;
     debugBtn.classList.toggle("on", debugOn);
+    preflightBtn.hidden = !debugOn; // the end-to-end check lives with debug
   }
+
+  // End-to-end preflight: verify the whole dispatch chain is live BEFORE you
+  // start talking, so you never record into a dead bridge. Renders a checklist
+  // in the debug panel.
+  async function runPreflight() {
+    debugEl.hidden = false;
+    let box = debugEl.querySelector(".vp-preflight");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "vp-preflight";
+      debugEl.prepend(box);
+    }
+    box.innerHTML = `<div class="vp-dbgrow">⏳ preflight: bridge → whisper → gh → orchestrator…</div>`;
+    let resp;
+    try {
+      resp = await new Promise((resolve) =>
+        chrome.runtime.sendMessage({ type: "preflight" }, resolve)
+      );
+    } catch (e) {
+      resp = { ok: false, error: String(e) };
+    }
+    if (!resp || !resp.ok || !resp.json) {
+      box.innerHTML = `<div class="vp-dbgrow vp-warn">✗ bridge not reachable — start it with <code>npm run serve</code>${
+        resp?.error ? ` (${escapeHtml(resp.error)})` : ""
+      }</div>`;
+      return;
+    }
+    const { ok, checks } = resp.json;
+    box.innerHTML =
+      `<div class="vp-dbgrow"><b>${
+        ok ? "✅ ready — everything's up, start recording" : "⚠️ not ready — fix the ✗ items first"
+      }</b></div>` +
+      checks
+        .map(
+          (c) =>
+            `<div class="vp-dbgrow ${c.ok ? "" : "vp-warn"}">${c.ok ? "✓" : "✗"} ${escapeHtml(
+              c.name
+            )} — ${escapeHtml(c.detail || "")}</div>`
+        )
+        .join("");
+  }
+  preflightBtn.addEventListener("click", runPreflight);
   function debugLine(a, src) {
     if (!debugOn) return;
     const secs = Math.floor((Date.now() - sessionStart) / 1000);
@@ -391,6 +437,7 @@
     debugOn = !debugOn;
     localStorage.setItem("voicepr:debug", debugOn ? "1" : "0");
     applyDebug();
+    if (debugOn) runPreflight(); // turning on debug = "check everything now"
   });
   applyDebug();
 
@@ -613,6 +660,77 @@
   }
   toggleBtn.addEventListener("click", pauseResume);
 
+  // ---------- crash-safe dispatch bundle --------------------------------------
+  // The recording + timeline + typed comments are the user's whole session. If
+  // the bridge is down or crashes mid-dispatch we must NOT lose it. So the
+  // moment we have the audio we persist the full bundle to extension storage
+  // (survives a tab refresh, a crash, even a browser restart), only clearing it
+  // once the orchestrator confirms a result. A failed dispatch is retryable —
+  // no re-recording from zero.
+  const PENDING_KEY = `voicepr:pending:${prUrl}`;
+  function savePending(bundle) {
+    try { chrome.storage?.local?.set({ [PENDING_KEY]: { ...bundle, savedAt: Date.now() } }); } catch {}
+  }
+  function clearPending() {
+    try { chrome.storage?.local?.remove(PENDING_KEY); } catch {}
+  }
+  function loadPending() {
+    return new Promise((resolve) => {
+      try { chrome.storage?.local?.get(PENDING_KEY, (o) => resolve(o?.[PENDING_KEY] || null)); }
+      catch { resolve(null); }
+    });
+  }
+
+  // Open the streaming port and drive it to a result. Reusable so Retry and
+  // recover-on-load hit the exact same path. Tracks whether a result actually
+  // arrived; if the connection ends first (bridge unreachable / crashed), the
+  // bundle stays saved and we offer a retry instead of silently dropping it.
+  function sendBundle(bundle) {
+    let gotResult = false;
+    try {
+      const port = chrome.runtime.connect({ name: "dispatch" });
+      activePort = port;
+      port.onMessage.addListener((ev) => {
+        if (ev.stage === "_end") {
+          try { port.disconnect(); } catch {}
+          if (!gotResult) offerRetry(bundle, "the bridge closed before finishing — is the voice-pr server up?");
+          return;
+        }
+        if (ev.stage === "result" || ev.stage === "done") {
+          gotResult = true;
+          clearPending(); // the orchestrator has it now; safe to forget
+        }
+        onEvent(ev);
+      });
+      port.postMessage(bundle);
+    } catch (e) {
+      offerRetry(bundle, e.message);
+    }
+  }
+
+  function offerRetry(bundle, why) {
+    dispatched = false; // let the user try again without re-recording
+    const kb = Math.round(((bundle.audioB64?.length || 0) * 0.75) / 1024);
+    line(
+      `⚠️ dispatch didn't go through (${why}). Your recording is saved${kb ? ` (~${kb}KB audio)` : ""} — nothing lost. Start the bridge (\`npm run serve\`), then retry.`,
+      true
+    );
+    const wrap = document.createElement("div");
+    wrap.className = "vp-line";
+    const btn = document.createElement("button");
+    btn.className = "vp-send";
+    btn.textContent = "↻ Retry dispatch";
+    btn.addEventListener("click", () => {
+      wrap.remove();
+      dispatched = true;
+      line("retrying…");
+      sendBundle(bundle);
+    });
+    wrap.appendChild(btn);
+    statusEl.appendChild(wrap);
+    statusEl.scrollTop = statusEl.scrollHeight;
+  }
+
   // ---------- dispatch: click and be on your way ------------------------------
   // Never blocks. Stops the mic, then hands the audio + typed comments to the
   // bridge, which transcribes AND dispatches server-side — so you can close the
@@ -637,19 +755,11 @@
     sendBtn.textContent = "Sent ✓";
     statusEl.hidden = false;
     statusEl.innerHTML = `<div class="vp-result ok">✅ On it — handed to the orchestrator.</div>
-      <div class="vp-reassure">You can close this tab. Transcription + the work run on the server; the PR updates in a few minutes.</div>`;
+      <div class="vp-reassure">You can close this tab. Transcription + the work run on the server; the PR updates in a few minutes. (Your recording is saved locally until the orchestrator confirms.)</div>`;
     const audio = await stopAndGetAudio();
-    try {
-      const port = chrome.runtime.connect({ name: "dispatch" });
-      activePort = port;
-      port.onMessage.addListener((ev) => {
-        if (ev.stage === "_end") return port.disconnect();
-        onEvent(ev);
-      });
-      port.postMessage({ prRef: prUrl, sessionId, typedSegments: segments, timeline, audioStartMs, ...(audio || {}) });
-    } catch (e) {
-      line(`error: ${e.message}`, true);
-    }
+    const bundle = { prRef: prUrl, sessionId, typedSegments: segments, timeline, audioStartMs, ...(audio || {}) };
+    savePending(bundle); // durable BEFORE the first network attempt
+    sendBundle(bundle);
   });
 
   const STAGE = {
@@ -705,4 +815,50 @@
   function escapeHtml(s) {
     return (s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   }
+
+  // ---------- recover an un-dispatched recording after a refresh/crash --------
+  // On load, if a previous dispatch never confirmed, surface it: the audio +
+  // timeline + typed comments are all still here. Resend without re-recording.
+  async function checkPendingOnLoad() {
+    const pending = await loadPending();
+    if (!pending) return;
+    const kb = Math.round(((pending.audioB64?.length || 0) * 0.75) / 1024);
+    const ago = pending.savedAt ? Math.round((Date.now() - pending.savedAt) / 60000) : null;
+    captureOpen = false;
+    panel.hidden = false;
+    pill.hidden = true;
+    toggleBtn.disabled = true;
+    sendBtn.disabled = true;
+    sendBtn.textContent = "Sent ✓";
+    statusEl.hidden = false;
+    statusEl.innerHTML = `<div class="vp-result warn">↻ Recovered an un-dispatched recording${
+      ago != null ? ` from ${ago} min ago` : ""
+    }${kb ? ` (~${kb}KB audio)` : ""}.</div>
+      <div class="vp-reassure">The last dispatch didn't complete. Resend it to the orchestrator, or discard.</div>`;
+    const wrap = document.createElement("div");
+    wrap.className = "vp-line";
+    const resend = document.createElement("button");
+    resend.className = "vp-send";
+    resend.textContent = "↻ Resend to orchestrator";
+    resend.addEventListener("click", () => {
+      wrap.remove();
+      sessionId = pending.sessionId || sessionId;
+      dispatched = true;
+      line("resending recovered recording…");
+      sendBundle(pending);
+    });
+    const discard = document.createElement("button");
+    discard.className = "vp-dbg";
+    discard.textContent = "Discard";
+    discard.addEventListener("click", () => {
+      clearPending();
+      teardown();
+      panel.hidden = true;
+      pill.hidden = false;
+    });
+    wrap.appendChild(resend);
+    wrap.appendChild(discard);
+    statusEl.appendChild(wrap);
+  }
+  checkPendingOnLoad();
 })();

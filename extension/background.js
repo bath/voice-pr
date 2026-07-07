@@ -13,6 +13,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
+  // end-to-end preflight (debug panel) — probe every dispatch dependency
+  if (msg?.type === "preflight") {
+    fetch(`${BRIDGE}/api/preflight`)
+      .then((r) => r.json())
+      .then((json) => sendResponse({ ok: true, json }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
   // local whisper transcription of a recorded session
   if (msg?.type === "transcribe") {
     fetch(`${BRIDGE}/api/transcribe`, {
