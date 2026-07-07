@@ -8,6 +8,7 @@ import { transcribe, anchorSegments, checkStt } from "./lib/transcribe.js";
 import { checkOrchestrator } from "./lib/orchestrator.js";
 import { run } from "./lib/exec.js";
 import { saveAudio, saveJson } from "./lib/archive.js";
+import { withTracer } from "./lib/trace.js";
 
 const PORT = Number(process.env.PORT || 4100);
 
@@ -49,6 +50,7 @@ async function handleDispatch(req, res) {
   const body = await readBody(req);
   const input = JSON.parse(body || "{}");
   const { prRef, sessionId, audioB64, ext = "webm", timeline = [], audioStartMs = 0, typedSegments = [] } = input;
+  const sid = sessionId || `anon-${Date.now()}`;
 
   res.writeHead(200, {
     "content-type": "application/x-ndjson",
@@ -59,91 +61,120 @@ async function handleDispatch(req, res) {
   // tab, work continues"). Swallow the socket error so a dead client can't
   // bubble an uncaught 'error' and take the whole server down.
   res.on("error", () => {});
-  const t0 = Date.now();
-  const events = [];
-  const send = (stage, detail) => {
-    events.push({ stage, detail, t: Math.round((Date.now() - t0) / 1000) });
-    // Skip the write once the client is gone; keep running so the session still
-    // finishes and archives server-side.
-    if (res.writableEnded || res.destroyed) return;
-    res.write(JSON.stringify({ stage, detail, t: Math.round((Date.now() - t0) / 1000) }) + "\n");
-  };
 
-  let segs = [...(typedSegments || [])];
-  let result = null,
-    err = null;
-  try {
-    if (audioB64) {
-      send("transcribing", {});
+  // Open a trace scope for the whole session: everything below — transcribe,
+  // the pipeline, every child process — logs to this sessionId, and the
+  // recording's trace.ndjson sits next to its audio.webm on disk.
+  return withTracer(sid, { prRef }, async (tracer) => {
+    await tracer.markLatest({ prRef, kind: "dispatch" });
+    tracer.event("bridge.dispatch.start", {
+      prRef,
+      hasAudio: !!audioB64,
+      ext,
+      timeline: timeline.length,
+      typed: (typedSegments || []).length,
+      audioBytes: audioB64 ? Math.round(audioB64.length * 0.75) : 0,
+    });
+
+    const t0 = Date.now();
+    const events = [];
+    // Single funnel for every progress event streamed to the client. Each stage
+    // name is also traced verbatim as its `code`, so grepping the code string
+    // lands on the emit site (in this file, lib/pipeline.js, or orchestrator.js).
+    const send = (stage, detail) => {
+      const t = Math.round((Date.now() - t0) / 1000);
+      events.push({ stage, detail, t });
+      if (stage !== "error") tracer.event(stage, detail || {});
+      // Skip the write once the client is gone; keep running so the session still
+      // finishes and archives server-side.
+      if (res.writableEnded || res.destroyed) return;
+      res.write(JSON.stringify({ stage, detail, t }) + "\n");
+    };
+
+    let segs = [...(typedSegments || [])];
+    let result = null,
+      err = null;
+    try {
+      if (audioB64) {
+        send("transcribing", {});
+        const audio = Buffer.from(audioB64, "base64");
+        const raw = await transcribe(audio, ext);
+        const anchored = anchorSegments(raw, timeline, { offsetMs: audioStartMs });
+        if (sessionId) {
+          await saveAudio(sessionId, audio, ext);
+          await saveJson(sessionId, "transcript.json", {
+            at: new Date().toISOString(),
+            prUrl: prRef,
+            raw: raw.map((s) => s.text).join(" "),
+            segments: anchored,
+            rawSegments: raw,
+            timeline,
+          });
+        }
+        send("transcribed", { count: anchored.length, text: raw.map((s) => s.text).join(" ") });
+        segs = [...anchored, ...segs];
+      }
+      if (!segs.length) throw new Error("nothing captured — no speech and no typed comments");
+      result = await runSession({ prRef, segments: segs }, send);
+      send("result", result);
+      tracer.event("bridge.dispatch.done", { workItemId: result?.workItemId, status: result?.status });
+    } catch (e) {
+      err = e.message;
+      // The error record carries the origin (loc) + a stable code; forward both
+      // to the client so the panel's "Copy error" report can point an AI agent
+      // straight at the failing code path.
+      const rec = tracer.error("bridge.dispatch.error", e);
+      send("error", { message: e.message, code: rec.code, loc: rec.loc, sessionId: sid });
+    } finally {
+      if (sessionId)
+        await saveJson(sessionId, "session.json", {
+          at: new Date().toISOString(),
+          prRef,
+          segments: segs,
+          transcript: segs.map((s) => s.text).join(" "),
+          result,
+          error: err,
+          events,
+        }).catch(() => {});
+      res.end();
+    }
+  });
+}
+
+async function handleTranscribe(req, res) {
+  const body = await readBody(req);
+  const { audioB64, ext = "webm", timeline = [], audioStartMs = 0, sessionId, prUrl } = JSON.parse(body || "{}");
+  const sid = sessionId || `transcribe-${Date.now()}`;
+  return withTracer(sid, { prUrl }, async (tracer) => {
+    try {
+      if (!audioB64) throw new Error("no audio");
       const audio = Buffer.from(audioB64, "base64");
-      const raw = await transcribe(audio, ext);
-      const anchored = anchorSegments(raw, timeline, { offsetMs: audioStartMs });
+      await tracer.markLatest({ prRef: prUrl, kind: "transcribe" });
+      tracer.event("bridge.transcribe.start", { kb: Math.round(audio.length / 1024), ext, timeline: timeline.length });
+      const t0 = Date.now();
+      const segs = await transcribe(audio, ext);
+      const anchored = anchorSegments(segs, timeline, { offsetMs: audioStartMs });
+      tracer.event("bridge.transcribe.done", { segments: segs.length, ms: Date.now() - t0 });
+      // archive the recording + transcript as a reusable fixture
       if (sessionId) {
         await saveAudio(sessionId, audio, ext);
         await saveJson(sessionId, "transcript.json", {
           at: new Date().toISOString(),
-          prUrl: prRef,
-          raw: raw.map((s) => s.text).join(" "),
+          prUrl: prUrl || null,
+          raw: segs.map((s) => s.text).join(" "),
           segments: anchored,
-          rawSegments: raw,
+          rawSegments: segs,
           timeline,
         });
       }
-      send("transcribed", { count: anchored.length, text: raw.map((s) => s.text).join(" ") });
-      segs = [...anchored, ...segs];
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ segments: anchored, raw: segs.map((s) => s.text).join(" ") }));
+    } catch (e) {
+      const rec = tracer.error("bridge.transcribe.error", e);
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: e.message, code: rec.code, loc: rec.loc, sessionId: sid }));
     }
-    if (!segs.length) throw new Error("nothing captured — no speech and no typed comments");
-    result = await runSession({ prRef, segments: segs }, send);
-    send("result", result);
-  } catch (e) {
-    err = e.message;
-    console.error(`[dispatch] error: ${e.message}`);
-    send("error", { message: e.message });
-  } finally {
-    if (sessionId)
-      await saveJson(sessionId, "session.json", {
-        at: new Date().toISOString(),
-        prRef,
-        segments: segs,
-        transcript: segs.map((s) => s.text).join(" "),
-        result,
-        error: err,
-        events,
-      }).catch(() => {});
-    res.end();
-  }
-}
-
-async function handleTranscribe(req, res) {
-  try {
-    const body = await readBody(req);
-    const { audioB64, ext = "webm", timeline = [], audioStartMs = 0, sessionId, prUrl } = JSON.parse(body || "{}");
-    if (!audioB64) throw new Error("no audio");
-    const audio = Buffer.from(audioB64, "base64");
-    console.log(`[transcribe] ${(audio.length / 1024).toFixed(0)}KB ${ext}, ${timeline.length} timeline pts`);
-    const t0 = Date.now();
-    const segs = await transcribe(audio, ext);
-    const anchored = anchorSegments(segs, timeline, { offsetMs: audioStartMs });
-    console.log(`[transcribe] ${segs.length} segments in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    // archive the recording + transcript as a reusable fixture
-    if (sessionId) {
-      await saveAudio(sessionId, audio, ext);
-      await saveJson(sessionId, "transcript.json", {
-        at: new Date().toISOString(),
-        prUrl: prUrl || null,
-        raw: segs.map((s) => s.text).join(" "),
-        segments: anchored,
-        rawSegments: segs,
-        timeline,
-      });
-    }
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ segments: anchored, raw: segs.map((s) => s.text).join(" ") }));
-  } catch (e) {
-    console.error(`[transcribe] error: ${e.message}`);
-    res.writeHead(400, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: e.message }));
-  }
+  });
 }
 
 // End-to-end preflight for the debug panel: probe every dependency the dispatch
@@ -151,6 +182,16 @@ async function handleTranscribe(req, res) {
 // record. Each check is independent and non-fatal — the report lists what's up
 // and what's not.
 async function handlePreflight(res) {
+  return withTracer(`preflight-${Date.now()}`, {}, async (tracer) => {
+    tracer.event("bridge.preflight.start", {});
+    const report = await runPreflight();
+    tracer.event("bridge.preflight.done", { ok: report.ok, failing: report.checks.filter((c) => !c.ok).map((c) => c.name) });
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(report));
+  });
+}
+
+async function runPreflight() {
   const checks = [{ name: "bridge", ok: true, detail: `listening on :${PORT}` }];
 
   const stt = await checkStt();
@@ -166,20 +207,24 @@ async function handlePreflight(res) {
   const orch = await checkOrchestrator();
   checks.push({ name: "orchestrator", ok: orch.ok, detail: orch.detail });
 
-  res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ ok: checks.every((c) => c.ok), checks }));
+  return { ok: checks.every((c) => c.ok), checks };
 }
 
 async function handleContext(url, res) {
   const prRef = url.searchParams.get("pr");
-  try {
-    const ctx = await getContext(prRef);
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify(ctx));
-  } catch (e) {
-    res.writeHead(400, { "content-type": "application/json" });
-    res.end(JSON.stringify({ error: e.message }));
-  }
+  return withTracer(`context-${Date.now()}`, { prRef }, async (tracer) => {
+    try {
+      tracer.event("bridge.context.start", { prRef });
+      const ctx = await getContext(prRef);
+      tracer.event("bridge.context.done", { pr: ctx?.pr?.number, jiraKey: ctx?.jiraKey });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(ctx));
+    } catch (e) {
+      const rec = tracer.error("bridge.context.error", e);
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: e.message, code: rec.code, loc: rec.loc }));
+    }
+  });
 }
 
 function readBody(req) {
