@@ -219,6 +219,7 @@
       </header>
       <div id="vp-context" class="vp-context"></div>
       <div class="vp-body">
+        <div id="vp-ready" class="vp-ready" hidden></div>
         <div id="vp-looking" class="vp-looking vp-now" aria-live="polite"></div>
         <div id="vp-status" class="vp-log" role="log" aria-live="polite"></div>
         <div id="vp-hud" class="vp-hud" hidden>
@@ -273,6 +274,7 @@
     clockEl = $("#vp-clock"),
     menuBtn = $("#vp-menu-btn"),
     menuEl = $("#vp-menu"),
+    readyEl = $("#vp-ready"),
     statusEl = $("#vp-status"),
     hudEl = $("#vp-hud"),
     hudPulseEl = $("#vp-hud-pulse"),
@@ -440,6 +442,9 @@
     statusEl.innerHTML = "";
     statusEl.classList.remove("pipe");
     pipe = null;
+    clearTimeout(readyHideTimer);
+    readyEl.hidden = true;
+    readyEl.innerHTML = "";
     lookingEl.textContent = "";
     debugEl.innerHTML = "";
     setContextChips();
@@ -478,7 +483,7 @@
     }, 1000);
     renderHud();
     start();
-    if (devOn) runPreflight(); // opened in dev view → verify the chain up front
+    runPreflight(); // validate the whole record→submit chain up front, for everyone
   });
   $("#vp-close").addEventListener("click", () => {
     teardown(); // closing cancels the current session; reopening starts fresh
@@ -492,35 +497,33 @@
   // every stage present and pending — then each row ticks from ✗ to ✓ in place
   // as results come back, so nothing pops in one at a time.
   const PREFLIGHT_STAGES = ["bridge", "ffmpeg", "whisper", "whisper model", "gh auth", "orchestrator"];
-  const TICK_MS = 120; // stagger between rows resolving, for a staged feel
+
+  // The readiness banner — shown to EVERY user at record-start, not just dev.
+  // It answers one question before you invest time talking: can this session
+  // actually record and submit? Green auto-collapses; a problem stays put with a
+  // Recheck button. Dev view additionally renders the per-check breakdown below.
+  let readyHideTimer = null;
+  function setReady(state, text, opts = {}) {
+    clearTimeout(readyHideTimer);
+    readyEl.hidden = false;
+    readyEl.className = `vp-ready ${state}`;
+    readyEl.innerHTML = "";
+    const msg = document.createElement("span");
+    msg.className = "vp-ready-msg";
+    msg.textContent = text;
+    readyEl.appendChild(msg);
+    if (opts.recheck) {
+      const b = document.createElement("button");
+      b.className = "vp-ready-recheck";
+      b.textContent = "Recheck";
+      b.addEventListener("click", () => runPreflight());
+      readyEl.appendChild(b);
+    }
+    if (state === "ok") readyHideTimer = setTimeout(() => (readyEl.hidden = true), 4000);
+  }
+
   async function runPreflight() {
-    if (!devOn) return;
-    debugEl.hidden = false;
-    let box = debugEl.querySelector(".vp-preflight");
-    if (!box) {
-      box = document.createElement("div");
-      box.className = "vp-preflight";
-      debugEl.prepend(box);
-    }
-    box.innerHTML = "";
-    const head = document.createElement("div");
-    head.className = "vp-dbgrow";
-    head.innerHTML = "<b>⏳ preflight — bridge → whisper → gh → orchestrator</b>";
-    box.appendChild(head);
-    const rows = new Map();
-    for (const name of PREFLIGHT_STAGES) {
-      const row = document.createElement("div");
-      row.className = "vp-dbgrow vp-preflight-row";
-      row.textContent = `◌ ${name} — checking…`;
-      box.appendChild(row);
-      rows.set(name, row);
-    }
-    const setRow = (name, ok, detail) => {
-      const row = rows.get(name);
-      if (!row) return;
-      row.className = `vp-dbgrow vp-preflight-row ${ok ? "ok" : "vp-warn"}`;
-      row.textContent = `${ok ? "✓" : "✗"} ${name}${detail ? ` — ${detail}` : ""}`;
-    };
+    setReady("checking", "Checking you can record & submit…");
     let resp;
     try {
       resp = await new Promise((resolve) => chrome.runtime.sendMessage({ type: "preflight" }, resolve));
@@ -528,22 +531,44 @@
       resp = { ok: false, error: String(e) };
     }
     if (!resp || !resp.ok || !resp.json) {
-      const why = resp?.error ? ` (${resp.error})` : "";
-      PREFLIGHT_STAGES.forEach((name, i) =>
-        setTimeout(() => setRow(name, false, i === 0 ? `not reachable — start it with npm run serve${why}` : "bridge down"), i * TICK_MS)
+      setReady("warn", "Bridge not reachable — start it with `npm run serve`. You can record, but dispatch will fail.", {
+        recheck: true,
+      });
+    } else if (resp.json.ok) {
+      setReady("ok", "Ready — bridge, Whisper, GitHub & orchestrator all good.");
+    } else {
+      const failing = resp.json.checks.filter((c) => !c.ok);
+      const d = failing[0]?.detail ? ` — ${failing[0].detail}` : "";
+      setReady(
+        "warn",
+        `Not ready: ${failing.map((c) => c.name).join(", ")}${d}. Fix before recording — dispatch will fail.`,
+        { recheck: true }
       );
-      head.innerHTML = "<b>✗ not ready — start the bridge (npm run serve)</b>";
-      return;
     }
-    const byName = Object.fromEntries(resp.json.checks.map((c) => [c.name, c]));
-    PREFLIGHT_STAGES.forEach((name, i) =>
-      setTimeout(() => {
-        const c = byName[name];
-        setRow(name, !!(c && c.ok), c ? c.detail || "" : "no result");
-        if (i === PREFLIGHT_STAGES.length - 1)
-          head.innerHTML = `<b>${resp.json.ok ? "✅ ready — start recording" : "⚠️ not ready — fix the ✗ items"}</b>`;
-      }, i * TICK_MS)
-    );
+    if (devOn) preflightDetail(resp); // full per-check breakdown, dev only
+  }
+
+  function preflightDetail(resp) {
+    debugEl.hidden = false;
+    let box = debugEl.querySelector(".vp-preflight");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "vp-preflight";
+      debugEl.prepend(box);
+    }
+    const j = resp && resp.ok ? resp.json : null;
+    const head = `<div class="vp-dbgrow"><b>${
+      !j ? "✗ bridge not reachable — npm run serve" : j.ok ? "✅ ready — you can record & submit" : "⚠️ not ready — fix the ✗ items"
+    }</b></div>`;
+    const rows = PREFLIGHT_STAGES.map((name) => {
+      const c = j ? j.checks.find((x) => x.name === name) : null;
+      const ok = j ? !!(c && c.ok) : false;
+      const detail = c ? c.detail : name === "bridge" ? "not reachable" : "bridge down";
+      return `<div class="vp-dbgrow vp-preflight-row ${ok ? "ok" : "vp-warn"}">${ok ? "✓" : "✗"} ${name}${
+        detail ? ` — ${escapeHtml(detail)}` : ""
+      }</div>`;
+    }).join("");
+    box.innerHTML = head + rows;
   }
   function debugLine(a, src) {
     if (!devOn) return;
@@ -681,7 +706,7 @@
     devOn = !devOn;
     localStorage.setItem("voicepr:dev", devOn ? "1" : "0");
     applyDev();
-    if (devOn && captureOpen) runPreflight(); // turning on = check the chain now
+    if (captureOpen) runPreflight(); // re-run so the dev breakdown appears/updates
   });
   applyDev();
 

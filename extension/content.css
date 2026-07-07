@@ -181,6 +181,26 @@
   min-height: 0; flex: 1;
 }
 
+/* readiness banner — shown to every user at record-start (can I submit?) */
+.vp-ready {
+  display: flex; align-items: center; gap: 8px;
+  margin: 8px 12px 0; padding: 7px 10px;
+  border-radius: 8px; font-size: 12px; line-height: 1.4;
+  border: 1px solid var(--vp-border-soft);
+}
+.vp-ready-msg { flex: 1; min-width: 0; }
+.vp-ready.checking { color: var(--vp-muted); background: var(--vp-canvas); }
+.vp-ready.checking .vp-ready-msg::before { content: "◌ "; }
+.vp-ready.ok { color: var(--vp-ok); background: rgba(63, 185, 80, 0.08); border-color: rgba(63, 185, 80, 0.3); }
+.vp-ready.ok .vp-ready-msg::before { content: "✓ "; font-weight: 700; }
+.vp-ready.warn { color: var(--vp-warn); background: rgba(248, 81, 73, 0.08); border-color: rgba(248, 81, 73, 0.35); }
+.vp-ready.warn .vp-ready-msg::before { content: "⚠ "; }
+.vp-ready-recheck {
+  flex: none; border: 1px solid currentColor; background: transparent; color: inherit;
+  border-radius: 6px; padding: 3px 8px; font: inherit; font-size: 11px; cursor: pointer;
+}
+.vp-ready-recheck:hover { background: rgba(255, 255, 255, 0.06); }
+
 /* live "now" readout — what the current spoken chunk would anchor to */
 .vp-now {
   padding: 8px 12px 6px;
