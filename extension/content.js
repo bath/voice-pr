@@ -31,8 +31,16 @@
     attentionTimer = null,
     hudFeed = [];
   const HUD_FEED_MAX = 8;
+  // Passive attention signals — mouse-hover (move/dwell) and scroll (viewport
+  // sampling/scroll-pause/revisit). Off by default: they fire constantly and
+  // anchor spoken comments to wherever the pointer/viewport drifted, which the
+  // orchestrator then misreads as intended context. Only the explicit signals
+  // (click/select/copy + live selection) stay on. Toggle in the panel header.
+  const PASSIVE_SRCS = new Set(["move", "dwell", "scroll", "scroll-pause", "revisit"]);
+  let passiveOn = localStorage.getItem("voicepr:passive") === "1";
   function pushTimeline(src = "scroll", anchor) {
     if (!captureOpen || !sessionStart) return;
+    if (!passiveOn && PASSIVE_SRCS.has(src)) return;
     const a = anchor || anchorNow();
     timeline.push({ t: Date.now() - sessionStart, src, ...a });
     debugLine(a, src);
@@ -120,7 +128,7 @@
     moveThrottle = 0,
     dwellTimer = null;
   document.addEventListener("mousemove", (e) => {
-    if (!captureOpen) return;
+    if (!captureOpen || !passiveOn) return; // hover tracking is opt-in
     const now = Date.now();
     laserPaint(e.clientX, e.clientY);
     if (now - moveThrottle < 120) return;
@@ -149,7 +157,7 @@
   // (which don't bubble "scroll") are still caught.
   let scrollPauseTimer = null;
   function onScroll() {
-    if (!captureOpen) return;
+    if (!captureOpen || !passiveOn) return; // scroll tracking is opt-in
     clearTimeout(scrollPauseTimer);
     scrollPauseTimer = setTimeout(() => {
       if (!captureOpen) return;
@@ -190,6 +198,7 @@
       <div class="vp-head">
         <span class="vp-title">🎙️ voice-pr</span>
         <span class="vp-head-right">
+          <button id="vp-passive-btn" class="vp-dbg" title="track mouse-hover + scroll as attention signals (off by default — noisy, can misanchor your comments)">🖱️ hover+scroll</button>
           <button id="vp-gaze-btn" class="vp-dbg" title="experimental: on-device webcam eye tracking (video never leaves your machine)">👁 gaze</button>
           <button id="vp-preflight-btn" class="vp-dbg" title="end-to-end check: bridge → whisper → gh → orchestrator, before you record" hidden>✓ check</button>
           <button id="vp-debug-btn" class="vp-dbg" title="show what's being captured as you talk">🐛 debug</button>
@@ -249,6 +258,7 @@
     debugEl = $("#vp-debug"),
     debugBtn = $("#vp-debug-btn"),
     preflightBtn = $("#vp-preflight-btn"),
+    passiveBtn = $("#vp-passive-btn"),
     gazeBtn = $("#vp-gaze-btn"),
     toggleBtn = $("#vp-toggle"),
     sendBtn = $("#vp-send"),
@@ -440,6 +450,18 @@
     if (debugOn) runPreflight(); // turning on debug = "check everything now"
   });
   applyDebug();
+
+  // ---------- hover + scroll tracking toggle (off by default) -----------------
+  function applyPassive() {
+    passiveBtn.classList.toggle("on", passiveOn);
+  }
+  passiveBtn.addEventListener("click", () => {
+    passiveOn = !passiveOn;
+    localStorage.setItem("voicepr:passive", passiveOn ? "1" : "0");
+    applyPassive();
+    if (!passiveOn) laser.style.display = "none"; // clear the hover highlight
+  });
+  applyPassive();
 
   // ---------- gaze: experimental on-device webcam eye tracking ----------------
   // WebGazer runs in an extension-origin iframe so GitHub's page CSP and camera
