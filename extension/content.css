@@ -273,7 +273,7 @@
 }
 .vp-logrow.reassure .vp-logtext { white-space: normal; }
 .vp-logrow.err { color: var(--vp-warn); }
-.vp-logrow.err .vp-logtext { white-space: normal; }
+.vp-logrow.err .vp-logtext { color: var(--vp-warn); white-space: normal; }
 
 /* result block (appended when the run reports back) */
 .vp-result {

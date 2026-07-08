@@ -21,6 +21,7 @@ const fake = installFakeCli(["docker"]);
 
 const {
   assertOrchestrator,
+  assertMayorAuth,
   checkOrchestrator,
   ensureProject,
   fileWorkItem,
@@ -82,6 +83,21 @@ test("checkOrchestrator flags an expired mayor Claude token (the silent-stall tr
   const r = await checkOrchestrator();
   assert.equal(r.ok, false);
   assert.match(r.detail, /token expired/i);
+});
+
+test("assertMayorAuth resolves when the mayor token is valid", async () => {
+  writeFileSync(CRED_PATH, JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() + 3600_000 } }));
+  await assert.doesNotReject(assertMayorAuth());
+});
+
+test("assertMayorAuth throws an actionable error when the mayor token is expired (dispatch fast-fail)", async () => {
+  writeFileSync(CRED_PATH, JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() - 1000 } }));
+  await assert.rejects(assertMayorAuth(), /token expired/i);
+});
+
+test("assertMayorAuth does not block when the token file is missing/unreadable (can't assess)", async () => {
+  writeFileSync(CRED_PATH, "not json at all");
+  await assert.doesNotReject(assertMayorAuth());
 });
 
 test("ensureProject clones and registers when the repo is absent from the workspace", async () => {

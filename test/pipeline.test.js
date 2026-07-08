@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installFakeCli } from "./helpers/fake-cli.js";
@@ -14,6 +14,12 @@ process.env.VOICE_PR_ARCHIVE_DIR = join(ROOT, "sessions");
 process.env.VOICE_PR_POLL_MS = "1";
 process.env.VOICE_PR_DISPATCH_MS = "60000";
 process.env.VOICE_PR_CONTAINER = "codingagent";
+// Pin the mayor credential to a temp file so the auth gate never reads the
+// host's real ~/.codingagent token (which would make this suite non-deterministic
+// — it would fail whenever that real token happened to be expired). world()
+// writes a valid (far-future) token; the expired-token test overwrites it.
+const CRED_PATH = join(ROOT, "cred.json");
+process.env.VOICE_PR_ORCH_CRED = CRED_PATH;
 
 const fake = installFakeCli(["docker", "gh"]);
 const { runSession, getContext, resolvePr } = await import("../lib/pipeline.js");
@@ -57,6 +63,8 @@ function world(overrides = {}) {
     { cmd: "docker", pattern: "refinery history", code: 0, stdout: refinery },
   ];
   fake.setRules([...rules, ...(overrides.extra ?? [])]);
+  // Healthy world => a valid, non-expired mayor token so the auth gate passes.
+  writeFileSync(CRED_PATH, JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() + 3600_000 } }));
 }
 
 const SEGMENTS = [{ text: "this retry needs backoff", file: "lib/net.js", line: 12 }];
@@ -109,6 +117,17 @@ test("runSession refuses a PR that is not open", async () => {
 test("runSession refuses a cross-repository (fork) PR", async () => {
   world({ meta: { isCrossRepository: true } });
   await assert.rejects(runSession({ prRef: PR_URL, segments: SEGMENTS }), /cross-repository/i);
+});
+
+test("runSession fails fast on an expired mayor Claude token — before filing a work item (issue #10 silent-stall)", async () => {
+  world();
+  // Dead token: the mayor would 401 and never dispatch, stalling the whole run.
+  writeFileSync(CRED_PATH, JSON.stringify({ claudeAiOauth: { expiresAt: Date.now() - 1000 } }));
+  await assert.rejects(runSession({ prRef: PR_URL, segments: SEGMENTS }, record().emit), /token expired/i);
+  assert.ok(
+    !fake.calls().some((c) => c.args.includes("mg new")),
+    "must fail before filing a work item — no `mg new` when the mayor's auth is dead"
+  );
 });
 
 test("runSession runs the full happy path and reports a merged, done result", async () => {
