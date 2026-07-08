@@ -58,7 +58,7 @@ function world(overrides = {}) {
     { cmd: "docker", pattern: "test -d", code: 0, stdout: "" }, // repo already checked out -> refresh
     { cmd: "docker", pattern: "project add", code: 0, stdout: "" },
     { cmd: "docker", pattern: "mg new", code: 0, stdout: "Created ca-1234: voice-pr session" },
-    { cmd: "docker", pattern: "mg mail send", code: 0, stdout: "" },
+    { cmd: "docker", pattern: "pogo nudge", code: 0, stdout: "" },
     { cmd: "docker", pattern: "mg show", code: 0, stdout: `Status: ${mgStatus}` },
     { cmd: "docker", pattern: "refinery history", code: 0, stdout: refinery },
   ];

@@ -143,13 +143,14 @@ test("fileWorkItem throws when mg output has no parseable id", async () => {
   );
 });
 
-test("signalMayor mails the mayor a dispatch-ready ask (not a PTY nudge)", async () => {
-  fake.setRules([{ cmd: "docker", pattern: "mg mail send", code: 0, stdout: "" }]);
+test("signalMayor nudges the mayor to dispatch now (not a passive mail ask)", async () => {
+  fake.setRules([{ cmd: "docker", pattern: "pogo nudge", code: 0, stdout: "" }]);
   await signalMayor({ id: "ca-11f8", pr: { number: 7 }, headRef: "feat" });
-  const call = fake.calls().find((c) => c.args.includes("mg mail send"));
-  assert.ok(call, "expected an `mg mail send` call");
-  assert.match(call.args, /mg mail send mayor/);
-  assert.match(call.args, /dispatch-ready: ca-11f8/);
+  const call = fake.calls().find((c) => c.args.includes("pogo nudge"));
+  assert.ok(call, "expected a `pogo nudge` call");
+  assert.match(call.args, /pogo nudge mayor/);
+  assert.match(call.args, /ca-11f8/);
+  assert.doesNotMatch(call.args, /mg mail send/);
 });
 
 test("trackWorkItem derives done from a done work-item status", async () => {
