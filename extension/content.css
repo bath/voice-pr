@@ -186,26 +186,40 @@
   min-height: 0; flex: 1;
 }
 
-/* readiness banner — shown to every user at record-start (can I submit?) */
-.vp-ready {
-  display: flex; align-items: center; gap: 8px;
-  margin: 8px 12px 0; padding: 7px 10px;
-  min-height: 48px; /* reserved slot — stays put through checking → ready/warn */
-  border-radius: 8px; font-size: 12px; line-height: 1.4;
-  border: 1px solid var(--vp-border-soft);
+/* readiness badge — one glyph in the control bar (can I record & submit?):
+   ◌ checking, ✓ green healthy, ✗ red problem. Click pops the per-check list. */
+.vp-ready-wrap { position: relative; flex: none; }
+.vp-ready-btn {
+  width: 28px; height: 28px; flex: none;
+  display: grid; place-items: center;
+  background: transparent; border: 0; border-radius: 6px;
+  font: inherit; font-size: 15px; font-weight: 700; cursor: pointer;
 }
-.vp-ready-msg { flex: 1; min-width: 0; }
-.vp-ready.checking { color: var(--vp-muted); background: var(--vp-canvas); }
-.vp-ready.checking .vp-ready-msg::before { content: "◌ "; }
-.vp-ready.ok { color: var(--vp-ok); background: rgba(63, 185, 80, 0.08); border-color: rgba(63, 185, 80, 0.3); }
-.vp-ready.ok .vp-ready-msg::before { content: "✓ "; font-weight: 700; }
-.vp-ready.warn { color: var(--vp-warn); background: rgba(248, 81, 73, 0.08); border-color: rgba(248, 81, 73, 0.35); }
-.vp-ready.warn .vp-ready-msg::before { content: "⚠ "; }
+.vp-ready-btn.checking { color: var(--vp-muted); cursor: default; }
+.vp-ready-btn.ready { color: var(--vp-ok); }
+.vp-ready-btn.problem { color: var(--vp-warn); }
+.vp-ready-btn:hover:not(.checking) { background: var(--vp-subtle); }
+
+/* the per-check breakdown, collapsed until the badge is clicked */
+.vp-ready-pop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 5;
+  min-width: 232px; max-width: 300px;
+  display: flex; flex-direction: column; gap: 2px; padding: 7px 8px;
+  background: var(--vp-elev); border: 1px solid var(--vp-border);
+  border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-family: var(--vp-mono); font-size: 11px; line-height: 1.5;
+}
+.vp-ready-row { color: var(--vp-muted); }
+.vp-ready-row.ok { color: var(--vp-ok); }
+.vp-ready-row.pending { color: var(--vp-muted); }
+.vp-ready-foot { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
 .vp-ready-recheck {
-  flex: none; border: 1px solid currentColor; background: transparent; color: inherit;
+  border: 1px solid currentColor; background: transparent; color: var(--vp-muted);
   border-radius: 6px; padding: 3px 8px; font: inherit; font-size: 11px; cursor: pointer;
 }
 .vp-ready-recheck:hover { background: rgba(255, 255, 255, 0.06); }
+/* keep the shared Copy-diagnostic button compact inside the popover */
+.vp-ready-foot .vp-secondary { padding: 3px 8px; font-size: 11px; font-weight: 500; }
 
 /* live "now" readout — what the current spoken chunk would anchor to */
 .vp-now {
@@ -321,8 +335,6 @@
 }
 .vp-dbgrow { color: var(--vp-muted); padding: 1px 0; }
 .vp-dbgrow:first-child { color: var(--vp-accent); }
-.vp-preflight-row { transition: color 0.15s ease; }
-.vp-preflight-row.ok { color: var(--vp-ok); }
 
 .vp-hud {
   margin: 0 12px 8px; padding: 8px 10px;

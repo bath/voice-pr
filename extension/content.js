@@ -272,6 +272,10 @@
         <span id="vp-clock" class="vp-clock">0:00</span>
         <span class="vp-bar-gap"></span>
         <button id="vp-send" class="vp-send" disabled>Dispatch →</button>
+        <div class="vp-ready-wrap">
+          <button id="vp-ready-btn" class="vp-ready-btn checking" title="Checking you can record & submit…" aria-haspopup="true" aria-expanded="false" hidden>◌</button>
+          <div id="vp-ready-pop" class="vp-ready-pop" role="menu" hidden></div>
+        </div>
         <div class="vp-menu-wrap">
           <button id="vp-menu-btn" class="vp-icon" title="More" aria-haspopup="true" aria-expanded="false">⋯</button>
           <div id="vp-menu" class="vp-menu" role="menu" hidden>
@@ -283,7 +287,6 @@
       </header>
       <div id="vp-context" class="vp-context"></div>
       <div class="vp-body">
-        <div id="vp-ready" class="vp-ready" hidden></div>
         <div id="vp-looking" class="vp-looking vp-now" aria-live="polite"></div>
         <div id="vp-status" class="vp-log" role="log" aria-live="polite"></div>
         <div id="vp-hud" class="vp-hud" hidden>
@@ -338,7 +341,8 @@
     clockEl = $("#vp-clock"),
     menuBtn = $("#vp-menu-btn"),
     menuEl = $("#vp-menu"),
-    readyEl = $("#vp-ready"),
+    readyBtn = $("#vp-ready-btn"),
+    readyPop = $("#vp-ready-pop"),
     statusEl = $("#vp-status"),
     hudEl = $("#vp-hud"),
     hudPulseEl = $("#vp-hud-pulse"),
@@ -356,9 +360,15 @@
     const opening = menuEl.hidden;
     menuEl.hidden = !opening;
     menuBtn.setAttribute("aria-expanded", String(opening));
+    if (opening) closeReadyPop();
   });
+  function closeReadyPop() {
+    readyPop.hidden = true;
+    readyBtn.setAttribute("aria-expanded", "false");
+  }
   document.addEventListener("click", (e) => {
     if (!menuEl.hidden && !menuEl.contains(e.target) && e.target !== menuBtn) closeMenu();
+    if (!readyPop.hidden && !readyPop.contains(e.target) && e.target !== readyBtn) closeReadyPop();
   });
 
   // ---------- context strip: chips (badges) -----------------------------------
@@ -505,8 +515,8 @@
   function resetUI() {
     statusEl.innerHTML = "";
     pipe = null;
-    // reserve the banner slot immediately (no empty → pop-in on open)
-    setReady("checking", "Checking you can record & submit…");
+    setReadyBadge("checking", "Checking you can record & submit…");
+    closeReadyPop();
     lookingEl.textContent = "";
     debugEl.innerHTML = "";
     setContextChips();
@@ -558,41 +568,50 @@
     pill.hidden = false;
   });
 
-  // ---------- end-to-end preflight (part of dev view) -------------------------
-  // Verify the whole dispatch chain is live BEFORE you start talking, so you
-  // never record into a dead bridge. The full checklist is rendered UP FRONT —
-  // every stage present and pending — then each row ticks from ✗ to ✓ in place
-  // as results come back, so nothing pops in one at a time.
+  // ---------- readiness check -------------------------------------------------
+  // Verify the whole record→submit chain is live BEFORE you start talking, so
+  // you never record into a dead bridge. Distilled to one unobtrusive glyph in
+  // the control bar — ◌ checking, ✓ green when everything's healthy, ✗ red when
+  // anything's wrong — running for EVERY session, not just dev view. Click it to
+  // pop the per-check breakdown (with Recheck + Copy-diagnostic when there's a
+  // problem); collapsed and out of the way otherwise.
   const PREFLIGHT_STAGES = ["bridge", "ffmpeg", "whisper", "whisper model", "gh auth", "orchestrator"];
 
-  // The readiness banner — shown to EVERY user at record-start, not just dev.
-  // It answers one question before you invest time talking: can this session
-  // actually record and submit? Green auto-collapses; a problem stays put with a
-  // Recheck button. Dev view additionally renders the per-check breakdown below.
-  // The banner keeps a fixed slot the whole time the panel is open (no
-  // appear/collapse), so its state changes in place without moving anything.
-  function setReady(state, text, opts = {}) {
-    readyEl.hidden = false;
-    readyEl.className = `vp-ready ${state}`;
-    readyEl.innerHTML = "";
-    const msg = document.createElement("span");
-    msg.className = "vp-ready-msg";
-    msg.textContent = text;
-    readyEl.appendChild(msg);
-    if (opts.recheck) {
-      const b = document.createElement("button");
-      b.className = "vp-ready-recheck";
-      b.textContent = "Recheck";
-      b.addEventListener("click", () => runPreflight());
-      readyEl.appendChild(b);
+  function setReadyBadge(state, title) {
+    readyBtn.hidden = false;
+    readyBtn.className = `vp-ready-btn ${state}`;
+    readyBtn.textContent = state === "ready" ? "✓" : state === "problem" ? "✗" : "◌";
+    readyBtn.title = title;
+  }
+
+  function renderReadyPop(rows, opts = {}) {
+    readyPop.innerHTML = "";
+    for (const r of rows) {
+      const el = document.createElement("div");
+      const kind = r.pending ? "pending" : r.ok ? "ok" : "vp-warn";
+      el.className = `vp-ready-row ${kind}`;
+      el.textContent = `${r.pending ? "◌" : r.ok ? "✓" : "✗"} ${r.name}${r.detail ? ` — ${r.detail}` : ""}`;
+      readyPop.appendChild(el);
     }
-    // Any not-ready banner also offers the Copy-diagnostic report (with the AI
-    // prompt), same as every other error surface.
-    if (opts.copyWhy) readyEl.appendChild(copyErrorButton(opts.copyWhy));
+    if (opts.recheck || opts.copyWhy) {
+      const foot = document.createElement("div");
+      foot.className = "vp-ready-foot";
+      if (opts.recheck) {
+        const b = document.createElement("button");
+        b.className = "vp-ready-recheck";
+        b.textContent = "Recheck";
+        b.addEventListener("click", () => runPreflight());
+        foot.appendChild(b);
+      }
+      // Same Copy-diagnostic report (with the AI prompt) as every other error surface.
+      if (opts.copyWhy) foot.appendChild(copyErrorButton(opts.copyWhy));
+      readyPop.appendChild(foot);
+    }
   }
 
   async function runPreflight() {
-    setReady("checking", "Checking you can record & submit…");
+    setReadyBadge("checking", "Checking you can record & submit…");
+    renderReadyPop(PREFLIGHT_STAGES.map((name) => ({ name, pending: true, detail: "checking…" })));
     let resp;
     try {
       resp = await new Promise((resolve) => chrome.runtime.sendMessage({ type: "preflight" }, resolve));
@@ -601,48 +620,37 @@
     }
     if (!resp || !resp.ok || !resp.json) {
       traceError("preflight.unreachable", resp?.error || "bridge not reachable");
-      setReady("warn", "Bridge not reachable — start it with `npm run serve`. You can record, but dispatch will fail.", {
-        recheck: true,
-        copyWhy: "preflight failed — bridge not reachable",
-      });
-    } else if (resp.json.ok) {
-      trace("preflight.done", { ok: true });
-      setReady("ok", "Ready — bridge, Whisper, GitHub & orchestrator all good.");
-    } else {
-      const failing = resp.json.checks.filter((c) => !c.ok);
-      const d = failing[0]?.detail ? ` — ${failing[0].detail}` : "";
-      trace("preflight.done", { ok: false, failing: failing.map((c) => c.name) });
-      setReady(
-        "warn",
-        `Not ready: ${failing.map((c) => c.name).join(", ")}${d}. Fix before recording — dispatch will fail.`,
-        { recheck: true, copyWhy: "preflight failed — one or more dependencies are down" }
+      setReadyBadge("problem", "Not ready — bridge not reachable. Start it with `npm run serve` (dispatch will fail).");
+      renderReadyPop(
+        [{ name: "bridge", ok: false, detail: `not reachable — start it with npm run serve${resp?.error ? ` (${resp.error})` : ""}` }],
+        { recheck: true, copyWhy: "preflight failed — bridge not reachable" }
       );
+      return;
     }
-    if (devOn) preflightDetail(resp); // full per-check breakdown, dev only
+    const { ok, checks } = resp.json;
+    const rows = PREFLIGHT_STAGES.map((name) => {
+      const c = checks.find((x) => x.name === name);
+      return { name, ok: !!(c && c.ok), detail: c ? c.detail : "no result" };
+    });
+    if (ok) {
+      trace("preflight.done", { ok: true });
+      setReadyBadge("ready", "Ready — bridge, Whisper, GitHub & orchestrator all good (click for details)");
+      renderReadyPop(rows);
+    } else {
+      const failing = checks.filter((c) => !c.ok);
+      trace("preflight.done", { ok: false, failing: failing.map((c) => c.name) });
+      setReadyBadge("problem", `Not ready: ${failing.map((c) => c.name).join(", ")} — fix before recording (dispatch will fail).`);
+      renderReadyPop(rows, { recheck: true, copyWhy: "preflight failed — one or more dependencies are down" });
+    }
   }
 
-  function preflightDetail(resp) {
-    debugEl.hidden = false;
-    let box = debugEl.querySelector(".vp-preflight");
-    if (!box) {
-      box = document.createElement("div");
-      box.className = "vp-preflight";
-      debugEl.prepend(box);
-    }
-    const j = resp && resp.ok ? resp.json : null;
-    const head = `<div class="vp-dbgrow"><b>${
-      !j ? "✗ bridge not reachable — npm run serve" : j.ok ? "✅ ready — you can record & submit" : "⚠️ not ready — fix the ✗ items"
-    }</b></div>`;
-    const rows = PREFLIGHT_STAGES.map((name) => {
-      const c = j ? j.checks.find((x) => x.name === name) : null;
-      const ok = j ? !!(c && c.ok) : false;
-      const detail = c ? c.detail : name === "bridge" ? "not reachable" : "bridge down";
-      return `<div class="vp-dbgrow vp-preflight-row ${ok ? "ok" : "vp-warn"}">${ok ? "✓" : "✗"} ${name}${
-        detail ? ` — ${escapeHtml(detail)}` : ""
-      }</div>`;
-    }).join("");
-    box.innerHTML = head + rows;
-  }
+  readyBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const opening = readyPop.hidden;
+    readyPop.hidden = !opening;
+    readyBtn.setAttribute("aria-expanded", String(opening));
+    if (opening) closeMenu();
+  });
   function debugLine(a, src) {
     if (!devOn) return;
     const secs = Math.floor((Date.now() - sessionStart) / 1000);
