@@ -921,15 +921,32 @@
   // once the orchestrator confirms a result. A failed dispatch is retryable —
   // no re-recording from zero.
   const PENDING_KEY = `voicepr:pending:${prUrl}`;
+  // Companion marker: set the moment the orchestrator accepts the hand-off (a
+  // work item now exists server-side). Its presence is what lets recovery tell
+  // "handed off, awaiting result" apart from "saved but never sent" — the saved
+  // bundle alone can't, because the dispatch stream survives the tab
+  // disconnecting, so a reload that races the terminal event leaves the bundle
+  // key set even though the work was in fact sent (#46). Cleared with the bundle
+  // on the terminal result.
+  const HANDOFF_KEY = `voicepr:handedoff:${prUrl}`;
   function savePending(bundle) {
     try { chrome.storage?.local?.set({ [PENDING_KEY]: { ...bundle, savedAt: Date.now() } }); } catch {}
   }
+  function markHandedOff(workItemId) {
+    try { chrome.storage?.local?.set({ [HANDOFF_KEY]: { handedOff: true, workItemId: workItemId || null, at: Date.now() } }); } catch {}
+  }
   function clearPending() {
-    try { chrome.storage?.local?.remove(PENDING_KEY); } catch {}
+    try { chrome.storage?.local?.remove([PENDING_KEY, HANDOFF_KEY]); } catch {}
   }
   function loadPending() {
     return new Promise((resolve) => {
       try { chrome.storage?.local?.get(PENDING_KEY, (o) => resolve(o?.[PENDING_KEY] || null)); }
+      catch { resolve(null); }
+    });
+  }
+  function loadHandoff() {
+    return new Promise((resolve) => {
+      try { chrome.storage?.local?.get(HANDOFF_KEY, (o) => resolve(o?.[HANDOFF_KEY] || null)); }
       catch { resolve(null); }
     });
   }
@@ -950,6 +967,13 @@
           try { port.disconnect(); } catch {}
           if (!gotResult) offerRetry(bundle, "the bridge closed before finishing — is the voice-pr server up?");
           return;
+        }
+        // A work item now exists server-side (filed, then handed to the
+        // orchestrator). Persist that BEFORE any terminal event so a reload that
+        // races the result doesn't fall back to the false "never dispatched"
+        // recovery — resending here would re-file a duplicate work item.
+        if (ev.stage === "work-filed" || ev.stage === "dispatching") {
+          markHandedOff(ev.detail?.id);
         }
         if (ev.stage === "result" || ev.stage === "done") {
           gotResult = true;
@@ -1293,14 +1317,13 @@
     return (s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   }
 
-  // ---------- recover an un-dispatched recording after a refresh/crash --------
-  // On load, if a previous dispatch never confirmed, surface it: the audio +
-  // timeline + typed comments are all still here. Resend without re-recording.
-  async function checkPendingOnLoad() {
-    const pending = await loadPending();
-    if (!pending) return;
-    sessionId = pending.sessionId || sessionId; // tag recovery traces to the recovered session
-    trace("recover.found", { savedAt: pending.savedAt || null, hasAudio: !!pending.audioB64 });
+  // ---------- recover a pending recording after a refresh/crash ---------------
+  // On load, decide from the persisted state (bundle + hand-off marker) what to
+  // show. A bundle that was never handed off is a genuine crash: surface it for
+  // resend. A bundle already accepted by the orchestrator is NOT a crash — the
+  // work runs server-side; a reload just raced the terminal event (#46), so we
+  // show an "awaiting result" note, never a resend that would duplicate it.
+  function recoveryHeader(pending) {
     const kb = Math.round(((pending.audioB64?.length || 0) * 0.75) / 1024);
     const ago = pending.savedAt ? Math.round((Date.now() - pending.savedAt) / 60000) : null;
     captureOpen = false;
@@ -1311,6 +1334,11 @@
     sendBtn.textContent = "Sent ✓";
     setContextChips();
     statusEl.innerHTML = "";
+    return { kb, ago };
+  }
+  function showUndispatchedRecovery(pending) {
+    const { kb, ago } = recoveryHeader(pending);
+    trace("recover.undispatched", { savedAt: pending.savedAt || null, hasAudio: !!pending.audioB64 });
     logRow(
       `↻ Recovered an un-dispatched recording${ago != null ? ` from ${ago} min ago` : ""}${
         kb ? ` (~${kb}KB audio)` : ""
@@ -1344,6 +1372,43 @@
     wrap.appendChild(resend);
     wrap.appendChild(discard);
     statusEl.appendChild(wrap);
+  }
+  function showAwaitingResult(pending, workItemId) {
+    const { ago } = recoveryHeader(pending);
+    trace("recover.awaiting-result", { workItemId: workItemId || null, savedAt: pending.savedAt || null });
+    logRow(
+      `↻ This recording was handed to the orchestrator${workItemId ? ` (work item ${workItemId})` : ""}${
+        ago != null ? `, ${ago} min ago` : ""
+      }.`,
+      { cls: "milestone" }
+    );
+    logRow(
+      "It runs server-side — this reload just lost the live view, not the work. Check the PR for new commits; there's nothing to resend.",
+      { cls: "reassure" }
+    );
+    const wrap = document.createElement("div");
+    wrap.className = "vp-actions-row";
+    const dismiss = document.createElement("button");
+    dismiss.className = "vp-send";
+    dismiss.textContent = "Got it";
+    dismiss.addEventListener("click", () => {
+      trace("recover.awaiting-dismiss", {});
+      clearPending(); // handed off; the local bundle no longer serves recovery
+      teardown();
+      panel.hidden = true;
+      pill.hidden = false;
+    });
+    wrap.appendChild(dismiss);
+    statusEl.appendChild(wrap);
+  }
+  async function checkPendingOnLoad() {
+    const [pending, handoff] = await Promise.all([loadPending(), loadHandoff()]);
+    const decision = window.VoicePrRecovery.decideRecovery(pending, handoff);
+    if (!decision.show) return;
+    sessionId = pending.sessionId || sessionId; // tag recovery traces to the recovered session
+    trace("recover.found", { mode: decision.mode, savedAt: pending.savedAt || null, hasAudio: !!pending.audioB64 });
+    if (decision.mode === "awaiting-result") showAwaitingResult(pending, decision.workItemId);
+    else showUndispatchedRecovery(pending);
   }
   checkPendingOnLoad();
 })();
