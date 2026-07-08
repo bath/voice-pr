@@ -44,8 +44,11 @@
         background: radial-gradient(120% 100% at 50% 0%, rgba(88,166,255,.05), transparent 60%), #0d1117;
         border: 1px solid #1b212b; min-height: 90px;
       }
-      /* the panels are position:fixed in the extension; make them flow here */
-      .stage .vp-panel, .stage .vp-pill, .stage #vp-popup { position: static; }
+      /* the panels are position:fixed in the extension; make them flow here.
+         The pill stays position:relative so its corner-anchored count badge
+         pins to the capsule (as it does in the extension), not the viewport. */
+      .stage .vp-panel, .stage #vp-popup { position: static; }
+      .stage .vp-pill { position: relative; }
       #vp-popup { border: 1px solid var(--vp-border); border-radius: 12px; overflow: hidden; }
     </style>
   </head>
@@ -93,8 +96,8 @@
         grid.appendChild(c);
       }
 
-      const job = (n, status, label, extra) => Object.assign(
-        { prUrl: `https://github.com/acme/checkout/pull/${n}`, prNumber: n, status, label, updatedAt: 1000 - n },
+      const job = (n, status, label, extra, repo = "acme/checkout") => Object.assign(
+        { prUrl: `https://github.com/${repo}/pull/${n}`, prNumber: n, status, label, updatedAt: 1000 - n },
         extra || {}
       );
 
@@ -150,17 +153,19 @@
           fleet: [],
         }));
 
-      // ---- the big one: fleet of 6, recording on this one --------------------
+      // ---- the big one: fleet of 6 across SIX repos, recording on this one ----
+      // The fleet deliberately spans repos — a bare "#7" is meaningless when the
+      // work is scattered across projects, so each row leads with owner/repo.
       const fleet6 = [
-        job(7, "running", "Orchestrator working · commit 2/3"),
-        job(4, "done", "Added null-check + test"),
-        job(11, "running", "Transcribing audio…"),
-        job(9, "failed", "Bridge closed — retry"),
-        job(2, "queued", "Queued · position 2"),
-        job(15, "done", "Renamed fooSvc → paymentClient"),
+        job(7, "running", "Orchestrator working · commit 2/3", null, "acme/checkout"),
+        job(4, "done", "Added null-check + test", null, "acme/billing-api"),
+        job(11, "running", "Transcribing audio…", null, "acme/web-dashboard"),
+        job(9, "failed", "Bridge closed — retry", null, "acme/infra-terraform"),
+        job(2, "queued", "Queued · position 2", null, "acme/mobile-ios"),
+        job(15, "done", "Renamed fooSvc → paymentClient", null, "acme/payments-core"),
       ];
-      cell("Hub — 6 PRs in flight, recording on #7", "state: running · fleet",
-        "The whole breadth: this PR highlighted at top, five others below in every status. This is the command center the memo asked for.",
+      cell("Hub — 6 PRs across 6 repos, recording on checkout #7", "state: running · fleet",
+        "The whole breadth: this PR highlighted at top, five others below spanning six repos in every status. Each row leads with owner/repo so the fleet is legible across projects.",
         hubPanel({
           thisPr: { prUrl: PR, prNumber: 7 },
           decision: { state: "running", job: fleet6[0] },
@@ -174,24 +179,29 @@
       const proot = document.createElement("div");
       proot.id = "vp-popup-root";
       proot.style.cssText = "padding:12px;display:flex;flex-direction:column;gap:10px";
-      const { STATUS_META, prNumberOf } = window.VoicePrHub;
+      const { STATUS_META, prNumberOf, repoOf, fleetCountLabel } = window.VoicePrHub;
       const phead = document.createElement("div");
       phead.className = "vp-popup-head";
       phead.style.cssText = "display:flex;justify-content:space-between;border-bottom:1px solid var(--vp-border-soft);padding-bottom:9px";
-      phead.innerHTML = '<span style="font-weight:650">🎙 voice-pr</span><span style="font-family:var(--vp-mono);font-size:11px;color:var(--vp-muted)">6 PRs · 3 active</span>';
+      phead.innerHTML = `<span style="font-weight:650">🎙 voice-pr</span><span style="font-family:var(--vp-mono);font-size:11px;color:var(--vp-muted)">${fleetCountLabel(fleet6)}</span>`;
       proot.appendChild(phead);
       const plist = document.createElement("div");
       plist.className = "vp-hub-list";
       for (const j of fleet6) {
         const meta = STATUS_META[j.status] || { dot: "queue" };
+        const repo = repoOf(j);
         const row = document.createElement("div");
         row.className = "vp-hubjob";
-        row.innerHTML = `<span class="vp-hubdot ${meta.dot}"></span><span class="vp-hubpr">#${prNumberOf(j)}</span><span class="vp-hublabel">${j.label}</span><span class="vp-hubjump">↗</span>`;
+        row.innerHTML =
+          `<span class="vp-hubdot ${meta.dot}"></span>` +
+          `<span class="vp-hubmain"><span class="vp-hubtop">${repo ? `<span class="vp-hubrepo">${repo}</span>` : ""}<span class="vp-hubpr">#${prNumberOf(j)}</span></span>` +
+          `<span class="vp-hublabel">${j.label}</span></span>` +
+          `<span class="vp-hubjump">↗</span>`;
         plist.appendChild(row);
       }
       proot.appendChild(plist);
       popup.appendChild(proot);
-      cell("Toolbar popup (D1) — visible on any tab", "popup", "Opened from the extension icon; the fleet without needing a GitHub PR tab open. Non-GitHub tabs included.", popup);
+      cell("Toolbar popup (D1) — visible on any tab", "popup", "Opened from the extension icon; the fleet across every repo without needing a GitHub PR tab open. Non-GitHub tabs included.", popup);
     </script>
   </body>
 </html>

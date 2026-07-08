@@ -4,12 +4,11 @@
 // vocabulary so the popup and the in-page hub can never drift.
 (function () {
   const JOBS_KEY = "voicepr:jobs";
-  const { STATUS_META, prNumberOf, isActive } = window.VoicePrHub;
+  const { STATUS_META, prNumberOf, repoOf, fleetCountLabel } = window.VoicePrHub;
   const root = document.getElementById("vp-popup-root");
 
   function render(jobs) {
     const arr = Object.values(jobs || {}).sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    const active = arr.filter((j) => isActive(j.status)).length;
     root.innerHTML = "";
 
     const head = document.createElement("div");
@@ -19,7 +18,7 @@
     title.textContent = "🎙 voice-pr";
     const count = document.createElement("span");
     count.className = "vp-popup-count";
-    count.textContent = arr.length ? `${arr.length} PR${arr.length === 1 ? "" : "s"}${active ? ` · ${active} active` : ""}` : "idle";
+    count.textContent = arr.length ? fleetCountLabel(arr) : "idle";
     head.append(title, count);
     root.appendChild(head);
 
@@ -39,16 +38,29 @@
       row.className = "vp-hubjob";
       const dot = document.createElement("span");
       dot.className = `vp-hubdot ${meta.dot}`;
+      const repo = repoOf(job);
+      const main = document.createElement("div");
+      main.className = "vp-hubmain";
+      const top = document.createElement("div");
+      top.className = "vp-hubtop";
+      if (repo) {
+        const r = document.createElement("span");
+        r.className = "vp-hubrepo";
+        r.textContent = repo;
+        top.appendChild(r);
+      }
       const pr = document.createElement("span");
       pr.className = "vp-hubpr";
       pr.textContent = `#${prNumberOf(job)}`;
-      const label = document.createElement("span");
+      top.appendChild(pr);
+      const label = document.createElement("div");
       label.className = "vp-hublabel";
       label.textContent = job.label || meta.verb || "…";
+      main.append(top, label);
       const jump = document.createElement("span");
       jump.className = "vp-hubjump";
       jump.textContent = "↗";
-      row.append(dot, pr, label, jump);
+      row.append(dot, main, jump);
       row.addEventListener("click", () => {
         chrome.runtime.sendMessage({ type: "focus-pr", prUrl: job.prUrl, tabId: job.originTabId }, () => window.close());
       });

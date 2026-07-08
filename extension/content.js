@@ -284,18 +284,20 @@
         <span id="vp-clock" class="vp-clock">0:00</span>
         <span class="vp-bar-gap"></span>
         <button id="vp-send" class="vp-send" disabled>Dispatch →</button>
-        <div class="vp-ready-wrap">
-          <button id="vp-ready-btn" class="vp-ready-btn checking" title="Checking you can record & submit…" aria-haspopup="true" aria-expanded="false" hidden>◌</button>
-          <div id="vp-ready-pop" class="vp-ready-pop" role="menu" hidden></div>
-        </div>
-        <div class="vp-menu-wrap">
-          <button id="vp-menu-btn" class="vp-icon" title="More" aria-haspopup="true" aria-expanded="false">⋯</button>
-          <div id="vp-menu" class="vp-menu" role="menu" hidden>
-            <button id="vp-dev-btn" class="vp-menu-item" role="menuitemcheckbox" title="developer view — mouse/scroll attention tracking, the live capture feed + most-attended HUD, and the bridge→whisper→gh→orchestrator preflight (off by default; default is a clean voice-only panel)">🔧 Developer view</button>
-            <button id="vp-gaze-btn" class="vp-menu-item" role="menuitemcheckbox" title="experimental: on-device webcam eye tracking (video never leaves your machine)" hidden>👁 Eye tracking</button>
+        <div class="vp-bar-actions">
+          <div class="vp-ready-wrap">
+            <button id="vp-ready-btn" class="vp-ready-btn checking" title="Checking you can record & submit…" aria-haspopup="true" aria-expanded="false" hidden>◌</button>
+            <div id="vp-ready-pop" class="vp-ready-pop" role="menu" hidden></div>
           </div>
+          <div class="vp-menu-wrap">
+            <button id="vp-menu-btn" class="vp-icon" title="More" aria-haspopup="true" aria-expanded="false">⋯</button>
+            <div id="vp-menu" class="vp-menu" role="menu" hidden>
+              <button id="vp-dev-btn" class="vp-menu-item" role="menuitemcheckbox" title="developer view — mouse/scroll attention tracking, the live capture feed + most-attended HUD, and the bridge→whisper→gh→orchestrator preflight (off by default; default is a clean voice-only panel)">🔧 Developer view</button>
+              <button id="vp-gaze-btn" class="vp-menu-item" role="menuitemcheckbox" title="experimental: on-device webcam eye tracking (video never leaves your machine)" hidden>👁 Eye tracking</button>
+            </div>
+          </div>
+          <button id="vp-close" class="vp-icon vp-x" title="Close">✕</button>
         </div>
-        <button id="vp-close" class="vp-icon vp-x" title="Close">✕</button>
       </header>
       <div id="vp-context" class="vp-context"></div>
       <div class="vp-body">
@@ -571,7 +573,10 @@
     pillBadge.textContent = n ? String(n) : "";
   }
 
-  function renderHubViewWith(jobs) {
+  // `animate` gates the staggered entrance: true on a fresh open, false on the
+  // live re-renders driven by registry changes (a running job ticking would
+  // otherwise re-slam the whole list into view on every update).
+  function renderHubViewWith(jobs, animate) {
     fleetJobs = jobs || {};
     const job = fleetJobs[prUrl] || null;
     Promise.all([loadPending(), loadHandoff()]).then(([pending, handoff]) => {
@@ -581,11 +586,12 @@
         decision,
         fleet: Object.values(fleetJobs),
       });
+      if (animate) hub.classList.add("vp-enter");
       hubBody.innerHTML = "";
       hubBody.appendChild(hub);
     });
   }
-  const renderHubView = () => loadFleet(renderHubViewWith);
+  const renderHubView = (animate) => loadFleet((jobs) => renderHubViewWith(jobs, animate));
 
   // Show the hub panel (Law 1: opening never touches the mic).
   function showHub(jobsMaybe) {
@@ -593,8 +599,8 @@
     panel.hidden = true;
     pill.hidden = true;
     hubPanel.hidden = false;
-    if (jobsMaybe) renderHubViewWith(jobsMaybe);
-    else renderHubView();
+    if (jobsMaybe) renderHubViewWith(jobsMaybe, true);
+    else renderHubView(true);
   }
   function openHub() {
     trace("hub.open", { pr: prUrl });

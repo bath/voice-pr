@@ -46,6 +46,25 @@
     return m ? m[1] : "?";
   }
 
+  // owner/repo from a PR url — the load-bearing identity when the fleet spans
+  // many repos, where a bare "#7" tells you nothing about which project it is.
+  function repoOf(job) {
+    const m = /github\.com\/([^/]+\/[^/]+)\/pull\//.exec((job && job.prUrl) || "");
+    return m ? m[1] : "";
+  }
+
+  // The fleet count, phrased so the leading number is never ambiguous. "1 · 1
+  // active" (what does the first 1 mean?) becomes "1 active"; a mixed fleet reads
+  // "3 active · 6 total"; an all-terminal fleet reads "6 total".
+  function fleetCountLabel(fleet) {
+    const n = (fleet || []).length;
+    if (!n) return "none";
+    const active = fleet.filter((j) => isActive(j.status)).length;
+    if (active === n) return `${active} active`;
+    if (active) return `${active} active · ${n} total`;
+    return `${n} total`;
+  }
+
   function fmtAge(ts, now) {
     if (!ts) return "";
     const mins = Math.round(((now || nowMs()) - ts) / 60000);
@@ -106,13 +125,22 @@
   // `self` marks this-PR so the hub can highlight your own work in the fleet.
   function fleetRow(el, job, { self = false } = {}) {
     const meta = STATUS_META[job.status] || { dot: "queue" };
+    const repo = repoOf(job);
+    // Two lines: repo identity + PR number on top, the work label below. Across
+    // a multi-repo fleet the repo is what tells the rows apart, so it leads.
+    const ident = el("div", { class: "vp-hubtop" }, [
+      repo ? el("span", { class: "vp-hubrepo", text: repo }) : null,
+      el("span", { class: "vp-hubpr", text: `#${prNumberOf(job)}` }),
+    ]);
     const row = el(
       "div",
       { class: "vp-hubjob" + (self ? " self" : ""), "data-vp-action": "jump", "data-vp-pr": job.prUrl, role: "button", tabindex: "0" },
       [
         el("span", { class: `vp-hubdot ${meta.dot}` }),
-        el("span", { class: "vp-hubpr", text: `#${prNumberOf(job)}` }),
-        el("span", { class: "vp-hublabel", text: job.label || (meta.verb || "…") }),
+        el("div", { class: "vp-hubmain" }, [
+          ident,
+          el("div", { class: "vp-hublabel", text: job.label || (meta.verb || "…") }),
+        ]),
         el("span", { class: "vp-hubjump", "aria-hidden": "true", text: "↗" }),
       ]
     );
@@ -192,6 +220,7 @@
     const el = makeEl(doc);
     const { thisPr = {}, decision = { state: "idle" }, fleet = [], now } = state || {};
     const prNumber = thisPr.prNumber != null ? String(thisPr.prNumber) : prNumberOf({ prUrl: thisPr.prUrl });
+    const thisRepo = repoOf({ prUrl: thisPr.prUrl });
 
     const hub = el("div", { class: "vp-hub", "data-vp-hub": "1" });
 
@@ -201,8 +230,8 @@
     hub.appendChild(
       el("button", { class: "vp-hub-record", "data-vp-action": "record", title: "Start a voice recording on this PR (⇧⌥R)" }, [
         el("span", { class: "vp-hub-record-dot", "aria-hidden": "true" }),
-        el("span", { text: running ? "Record again on this PR" : "Record on this PR" }),
-        el("span", { class: "vp-hub-record-pr", text: `#${prNumber}` }),
+        el("span", { class: "vp-hub-record-text", text: running ? "Record again on this PR" : "Record on this PR" }),
+        el("span", { class: "vp-hub-record-pr", text: thisRepo ? `${thisRepo} #${prNumber}` : `#${prNumber}` }),
       ])
     );
 
@@ -212,11 +241,10 @@
 
     // (Law 3) The fleet — pure monitor. Section header with the same count the
     // toolbar badge shows, then one row per PR with this PR highlighted.
-    const activeCount = fleet.filter((j) => isActive(j.status)).length;
     hub.appendChild(
       el("div", { class: "vp-hub-sectlabel" }, [
         el("span", { text: "Background work" }),
-        el("span", { class: "vp-hub-count", text: fleet.length ? `${fleet.length}${activeCount ? ` · ${activeCount} active` : ""}` : "none" }),
+        el("span", { class: "vp-hub-count", text: fleetCountLabel(fleet) }),
       ])
     );
 
@@ -246,6 +274,8 @@
     isActive,
     isTerminal,
     prNumberOf,
+    repoOf,
+    fleetCountLabel,
     fmtAge,
     STATUS_META,
   };

@@ -17,6 +17,10 @@
   --vp-warn: #f85149;
   --vp-amber: #d29922;
   --vp-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  /* Motion system (shadcn-flavored): one ease for exits/settles, one springy
+     ease for entrances/presses so every surface moves with the same physics. */
+  --vp-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --vp-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   position: fixed;
   right: 20px;
   bottom: 20px;
@@ -58,25 +62,49 @@
    deep-link (⏺) that jumps straight to capture for power authors (Law 1: still
    an explicit action). */
 .vp-pill {
+  position: relative;
   display: inline-flex; align-items: stretch; gap: 0;
-  border-radius: 999px; overflow: hidden;
+  border-radius: 999px; overflow: visible;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  transition: transform 0.2s var(--vp-ease), box-shadow 0.2s var(--vp-ease);
+  animation: vp-pill-in 0.32s var(--vp-ease-spring) both;
 }
+.vp-pill:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42); }
+.vp-pill:active { transform: translateY(0); }
 .vp-pill-open, .vp-pill-rec {
   display: inline-flex; align-items: center; gap: 8px;
   background: var(--vp-accent-deep); color: #fff; border: 0;
   font: inherit; font-weight: 600; cursor: pointer;
+  transition: filter 0.15s var(--vp-ease);
 }
-.vp-pill-open { padding: 11px 16px; }
+/* the pill is one capsule; its two buttons share the rounded ends */
+.vp-pill-open { padding: 11px 16px; border-radius: 999px 0 0 999px; }
 .vp-pill-rec {
   padding: 11px 14px; font-size: 15px; line-height: 1;
   border-left: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0 999px 999px 0;
 }
 .vp-pill-open:hover, .vp-pill-rec:hover { filter: brightness(1.12); }
+/* the active-count badge — a floating counter pinned to the pill's corner so it
+   reads as a notification bubble, not an off-center inline glyph */
 .vp-pill-badge {
-  display: inline-grid; place-items: center; min-width: 18px; height: 18px;
-  padding: 0 5px; border-radius: 999px; background: var(--vp-warn); color: #fff;
-  font-family: var(--vp-mono); font-size: 11px; font-weight: 700;
+  position: absolute; top: -7px; right: -6px; z-index: 1;
+  display: grid; place-items: center; box-sizing: content-box;
+  min-width: 10px; height: 18px; padding: 0 5px;
+  border-radius: 999px; background: var(--vp-warn); color: #fff;
+  border: 2px solid var(--vp-canvas);
+  font-family: var(--vp-mono); font-size: 10.5px; font-weight: 700;
+  font-variant-numeric: tabular-nums; line-height: 1;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  animation: vp-badge-pop 0.34s var(--vp-ease-spring) both;
+}
+@keyframes vp-pill-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.94); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes vp-badge-pop {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 /* ---- panel shell ---------------------------------------------------------- */
@@ -93,6 +121,14 @@
   border-radius: 12px;
   box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
   overflow: hidden;
+  /* Grows out of the pill's bottom-right corner on open. The [hidden] toggle
+     flips display none→flex, which replays this each time the panel appears. */
+  transform-origin: bottom right;
+  animation: vp-panel-in 0.28s var(--vp-ease) both;
+}
+@keyframes vp-panel-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* ---- control bar (fixed header) ------------------------------------------ */
@@ -100,11 +136,19 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 9px 10px;
+  padding: 10px 12px;
   background: var(--vp-elev);
   border-bottom: 1px solid var(--vp-border);
 }
 .vp-bar-gap { flex: 1; }
+/* the trailing utility cluster (readiness · overflow · close) — held together
+   as one tight group and set off from the primary Dispatch action, so the bar
+   reads as [record · clock] … [dispatch] · [utilities] instead of one crush */
+.vp-bar-actions {
+  display: flex; align-items: center; gap: 2px; flex: none;
+  margin-left: 2px; padding-left: 6px;
+  border-left: 1px solid var(--vp-border-soft);
+}
 
 /* record / pause — a square icon button; state carried by color, not text */
 .vp-rec {
@@ -113,9 +157,10 @@
   border: 1px solid var(--vp-border); border-radius: 8px;
   background: var(--vp-accent-deep); color: #fff;
   font: inherit; font-size: 15px; line-height: 1; cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s var(--vp-ease);
 }
 .vp-rec:hover { filter: brightness(1.08); }
+.vp-rec:active:not(:disabled) { transform: scale(0.93); }
 .vp-rec.vp-recording {
   background: transparent; border-color: var(--vp-warn); color: var(--vp-warn);
 }
@@ -141,8 +186,10 @@
   border: 0; border-radius: 8px; padding: 8px 12px;
   background: var(--vp-accent-deep); color: #fff;
   font: inherit; font-weight: 600; cursor: pointer;
+  transition: filter 0.15s var(--vp-ease), transform 0.12s var(--vp-ease), opacity 0.15s var(--vp-ease);
 }
 .vp-send:hover:not(:disabled) { filter: brightness(1.08); }
+.vp-send:active:not(:disabled) { transform: scale(0.96); }
 .vp-send:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* icon buttons (menu, close) */
@@ -151,8 +198,10 @@
   display: grid; place-items: center;
   background: transparent; border: 0; border-radius: 6px;
   color: var(--vp-muted); font: inherit; font-size: 15px; cursor: pointer;
+  transition: background 0.15s var(--vp-ease), color 0.15s var(--vp-ease), transform 0.12s var(--vp-ease);
 }
 .vp-icon:hover { background: var(--vp-subtle); color: var(--vp-text); }
+.vp-icon:active { transform: scale(0.9); }
 .vp-x { font-size: 14px; }
 
 /* overflow menu (holds dev + gaze) */
@@ -163,6 +212,12 @@
   display: flex; flex-direction: column; gap: 2px; padding: 5px;
   background: var(--vp-elev); border: 1px solid var(--vp-border);
   border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  transform-origin: top right;
+  animation: vp-pop-in 0.16s var(--vp-ease) both;
+}
+@keyframes vp-pop-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .vp-menu-item {
   display: flex; align-items: center; gap: 8px;
@@ -170,6 +225,7 @@
   background: transparent; color: var(--vp-text);
   font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
 }
+.vp-menu-item { transition: background 0.12s var(--vp-ease); }
 .vp-menu-item:hover { background: var(--vp-subtle); }
 .vp-menu-item.on { color: var(--vp-accent); }
 .vp-menu-item.on::after { content: "✓"; margin-left: auto; color: var(--vp-accent); }
@@ -188,6 +244,11 @@
   background: var(--vp-subtle); color: var(--vp-muted);
   border: 1px solid var(--vp-border-soft);
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  animation: vp-chip-in 0.28s var(--vp-ease) both;
+}
+@keyframes vp-chip-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .vp-chip.brand { color: var(--vp-text); font-weight: 600; }
 .vp-chip.tk { color: var(--vp-accent); border-color: rgba(76, 141, 255, 0.3); }
@@ -225,6 +286,8 @@
   background: var(--vp-elev); border: 1px solid var(--vp-border);
   border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   font-family: var(--vp-mono); font-size: 11px; line-height: 1.5;
+  transform-origin: top right;
+  animation: vp-pop-in 0.16s var(--vp-ease) both;
 }
 .vp-ready-row { color: var(--vp-muted); }
 .vp-ready-row.ok { color: var(--vp-ok); }
@@ -408,17 +471,29 @@
 .vp-hub-record {
   display: flex; align-items: center; gap: 9px; width: 100%;
   padding: 12px 14px; border: 0; border-radius: 10px;
-  background: var(--vp-accent-deep); color: #fff;
+  background: linear-gradient(180deg, var(--vp-accent) 0%, var(--vp-accent-deep) 100%);
+  color: #fff;
   font: inherit; font-weight: 650; font-size: 13.5px; cursor: pointer;
+  box-shadow: 0 2px 10px rgba(31, 111, 235, 0.35);
+  transition: filter 0.15s var(--vp-ease), transform 0.12s var(--vp-ease), box-shadow 0.25s var(--vp-ease);
 }
-.vp-hub-record:hover { filter: brightness(1.1); }
+.vp-hub-record:hover { filter: brightness(1.08); box-shadow: 0 4px 18px rgba(31, 111, 235, 0.5); }
+.vp-hub-record:active { transform: scale(0.985); }
+.vp-hub-record-text { flex: none; }
 .vp-hub-record-dot {
   width: 11px; height: 11px; border-radius: 50%; flex: none;
   background: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
+  animation: vp-record-breathe 2.4s var(--vp-ease) infinite;
 }
 .vp-hub-record-pr {
-  margin-left: auto; font-family: var(--vp-mono); font-size: 12px;
-  color: rgba(255, 255, 255, 0.7); font-weight: 600;
+  margin-left: auto; min-width: 0;
+  font-family: var(--vp-mono); font-size: 12px;
+  color: rgba(255, 255, 255, 0.78); font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@keyframes vp-record-breathe {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.22); }
+  50% { box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.08); }
 }
 
 /* section header for the fleet list */
@@ -433,31 +508,48 @@
   padding: 6px 2px 2px;
 }
 
-/* the fleet — one row per PR */
+/* the fleet — one row per PR. Two lines: repo identity + PR number lead (the
+   fleet spans many repos, so the repo is what tells rows apart), the work label
+   sits below. */
 .vp-hub-list { display: flex; flex-direction: column; gap: 6px; }
 .vp-hubjob {
-  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
-  padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 11px; border-radius: 8px; cursor: pointer;
   background: var(--vp-canvas); border: 1px solid var(--vp-border-soft);
+  transition: border-color 0.15s var(--vp-ease), background 0.15s var(--vp-ease),
+    transform 0.15s var(--vp-ease), box-shadow 0.15s var(--vp-ease);
 }
-.vp-hubjob:hover { border-color: var(--vp-border); background: var(--vp-subtle); }
+.vp-hubjob:hover {
+  border-color: var(--vp-border); background: var(--vp-subtle);
+  transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+}
+.vp-hubjob:active { transform: translateY(0); }
 .vp-hubjob.self {
   border-color: rgba(76, 141, 255, 0.4); background: rgba(76, 141, 255, 0.08);
 }
+.vp-hubjob.self:hover { border-color: rgba(76, 141, 255, 0.6); }
 .vp-hubdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .vp-hubdot.run { background: var(--vp-accent); animation: vp-pulse 1.8s infinite; }
 .vp-hubdot.done { background: var(--vp-ok); }
 .vp-hubdot.queue { background: var(--vp-amber); }
 .vp-hubdot.fail { background: var(--vp-warn); }
-.vp-hubpr {
+/* the two-line content column */
+.vp-hubmain { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.vp-hubtop { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.vp-hubrepo {
   font-family: var(--vp-mono); font-size: 11.5px; font-weight: 600;
-  color: var(--vp-text); flex: none;
-}
-.vp-hublabel {
-  font-size: 11.5px; color: var(--vp-muted); flex: 1;
+  color: var(--vp-text); min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.vp-hubjump { color: var(--vp-faint); font-size: 12px; flex: none; }
+.vp-hubpr {
+  font-family: var(--vp-mono); font-size: 11.5px; font-weight: 600;
+  color: var(--vp-muted); flex: none;
+}
+.vp-hublabel {
+  font-size: 11px; color: var(--vp-muted); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vp-hubjump { color: var(--vp-faint); font-size: 12px; flex: none; align-self: center; }
 .vp-hubjob:hover .vp-hubjump { color: var(--vp-text); }
 
 /* this-PR status / result / recovery card */
@@ -480,10 +572,35 @@
   border: 0; border-radius: 8px; padding: 7px 12px;
   background: var(--vp-accent-deep); color: #fff;
   font: inherit; font-weight: 600; font-size: 12px; cursor: pointer;
+  transition: filter 0.15s var(--vp-ease), background 0.15s var(--vp-ease),
+    color 0.15s var(--vp-ease), transform 0.12s var(--vp-ease);
 }
 .vp-hubbtn:hover { filter: brightness(1.1); }
+.vp-hubbtn:active { transform: scale(0.96); }
 .vp-hubbtn.ghost {
   background: transparent; color: var(--vp-muted);
   border: 1px solid var(--vp-border);
 }
 .vp-hubbtn.ghost:hover { background: var(--vp-subtle); color: var(--vp-text); filter: none; }
+
+/* ---- hub entrance: a one-shot staggered reveal ---------------------------- */
+/* Gated by .vp-enter, which content.js adds ONLY on a fresh open — never on the
+   live re-renders a running job triggers, so the fleet doesn't re-slam into view
+   every time a status ticks. The record CTA, this-PR card, section label, and
+   fleet list rise in sequence; then the rows inside the list stagger. */
+@keyframes vp-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.vp-hub.vp-enter > * { animation: vp-rise 0.3s var(--vp-ease) both; }
+.vp-hub.vp-enter > *:nth-child(1) { animation-delay: 0.02s; }
+.vp-hub.vp-enter > *:nth-child(2) { animation-delay: 0.07s; }
+.vp-hub.vp-enter > *:nth-child(3) { animation-delay: 0.12s; }
+.vp-hub.vp-enter > *:nth-child(4) { animation-delay: 0.17s; }
+.vp-hub.vp-enter .vp-hub-list .vp-hubjob { animation: vp-rise 0.3s var(--vp-ease) both; }
+.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(1) { animation-delay: 0.18s; }
+.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(2) { animation-delay: 0.24s; }
+.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(3) { animation-delay: 0.30s; }
+.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(4) { animation-delay: 0.36s; }
+.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(5) { animation-delay: 0.42s; }
+.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(n + 6) { animation-delay: 0.48s; }

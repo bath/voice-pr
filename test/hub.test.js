@@ -172,3 +172,42 @@ test("active count = running + queued (drives the toolbar badge)", async () => {
   const fleet = [{ status: "running" }, { status: "queued" }, { status: "done" }, { status: "failed" }];
   assert.equal(fleet.filter((j) => isActive(j.status)).length, 2);
 });
+
+// ---- repo identity: a bare "#7" is useless across a multi-repo fleet ---------
+
+test("repoOf extracts owner/repo from a PR url, empty when unparseable", async () => {
+  const { repoOf } = await loadHub();
+  assert.equal(repoOf({ prUrl: "https://github.com/acme/checkout/pull/7" }), "acme/checkout");
+  assert.equal(repoOf({ prUrl: "https://github.com/acme/billing-api/pull/42" }), "acme/billing-api");
+  assert.equal(repoOf({ prUrl: "not-a-url" }), "");
+  assert.equal(repoOf({}), "");
+});
+
+test("fleet rows carry the repo identity, not just the PR number", async () => {
+  const { renderHub } = await loadHub();
+  const fleet = [
+    { prUrl: "https://github.com/acme/checkout/pull/7", prNumber: 7, status: "running", label: "Working…", updatedAt: 2 },
+    { prUrl: "https://github.com/acme/billing-api/pull/4", prNumber: 4, status: "done", label: "Fixed", updatedAt: 1 },
+  ];
+  const hub = renderHub(fakeDoc, {
+    thisPr: { prUrl: "https://github.com/acme/checkout/pull/7", prNumber: 7 },
+    decision: { state: "running", job: fleet[0] },
+    fleet,
+  });
+  const repos = hub.all((n) => n._class === "vp-hubrepo").map((n) => n.textContent);
+  assert.deepEqual(repos.sort(), ["acme/billing-api", "acme/checkout"]);
+});
+
+// ---- fleet count label: the leading number is never ambiguous ----------------
+
+test("fleetCountLabel phrases the count without an ambiguous leading number", async () => {
+  const { fleetCountLabel } = await loadHub();
+  assert.equal(fleetCountLabel([]), "none");
+  // one active job: "1 active", not the confusing "1 · 1 active"
+  assert.equal(fleetCountLabel([{ status: "running" }]), "1 active");
+  assert.equal(fleetCountLabel([{ status: "running" }, { status: "queued" }]), "2 active");
+  // mixed fleet spells out both numbers
+  assert.equal(fleetCountLabel([{ status: "running" }, { status: "done" }, { status: "failed" }]), "1 active · 3 total");
+  // all terminal: no "active" at all
+  assert.equal(fleetCountLabel([{ status: "done" }, { status: "failed" }]), "2 total");
+});

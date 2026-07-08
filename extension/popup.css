@@ -6,11 +6,19 @@
   --vp-muted: #8b949e; --vp-faint: #6e7681; --vp-accent: #4c8dff;
   --vp-ok: #3fb950; --vp-warn: #f85149; --vp-amber: #d29922;
   --vp-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --vp-ease: cubic-bezier(0.16, 1, 0.3, 1);
   margin: 0; width: 300px; background: var(--vp-panel); color: var(--vp-text);
   font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 #vp-popup * { box-sizing: border-box; }
-#vp-popup-root { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+#vp-popup-root {
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+  animation: vp-popup-in 0.24s var(--vp-ease) both;
+}
+@keyframes vp-popup-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 
 .vp-popup-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -24,21 +32,38 @@
 
 .vp-hub-list { display: flex; flex-direction: column; gap: 6px; }
 .vp-hubjob {
-  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
-  padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  padding: 9px 11px; border-radius: 8px; cursor: pointer;
   background: var(--vp-canvas); border: 1px solid var(--vp-border-soft);
   color: var(--vp-text); font: inherit;
+  transition: border-color 0.15s var(--vp-ease), background 0.15s var(--vp-ease),
+    transform 0.15s var(--vp-ease), box-shadow 0.15s var(--vp-ease);
 }
-.vp-hubjob:hover { border-color: var(--vp-border); background: var(--vp-subtle); }
+.vp-hubjob:hover {
+  border-color: var(--vp-border); background: var(--vp-subtle);
+  transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+}
+.vp-hubjob:active { transform: translateY(0); }
 .vp-hubdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .vp-hubdot.run { background: var(--vp-accent); }
 .vp-hubdot.done { background: var(--vp-ok); }
 .vp-hubdot.queue { background: var(--vp-amber); }
 .vp-hubdot.fail { background: var(--vp-warn); }
-.vp-hubpr { font-family: var(--vp-mono); font-size: 11.5px; font-weight: 600; flex: none; }
-.vp-hublabel {
-  font-size: 11.5px; color: var(--vp-muted); flex: 1;
+.vp-hubmain { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.vp-hubtop { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.vp-hubrepo {
+  font-family: var(--vp-mono); font-size: 11.5px; font-weight: 600;
+  color: var(--vp-text); min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.vp-hubjump { color: var(--vp-faint); font-size: 12px; flex: none; }
+.vp-hubpr { font-family: var(--vp-mono); font-size: 11.5px; font-weight: 600; color: var(--vp-muted); flex: none; }
+.vp-hublabel {
+  font-size: 11px; color: var(--vp-muted); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vp-hubjump { color: var(--vp-faint); font-size: 12px; flex: none; align-self: center; }
 .vp-hubjob:hover .vp-hubjump { color: var(--vp-text); }
+
+@media (prefers-reduced-motion: reduce) {
+  #vp-popup *, #vp-popup-root { animation: none !important; transition: none !important; }
+}
