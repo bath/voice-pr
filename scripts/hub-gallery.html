@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>voice-pr · hub state gallery</title>
+    <!-- The real component CSS. hub.js renders the real components. Everything
+         below is the actual extension UI, driven by fixtures — not a mockup. -->
+    <link rel="stylesheet" href="../extension/content.css" />
+    <style>
+      /* Token block lives on #voicepr-root in the extension; expose it on :root
+         here so the bare .vp-* component rules resolve their var()s. */
+      :root {
+        --vp-canvas: #0d1117; --vp-panel: #161b22; --vp-elev: #1c2128;
+        --vp-subtle: #21262d; --vp-border: #30363d; --vp-border-soft: #262c34;
+        --vp-text: #e6edf3; --vp-muted: #8b949e; --vp-faint: #6e7681;
+        --vp-accent: #4c8dff; --vp-accent-deep: #1f6feb; --vp-ok: #3fb950;
+        --vp-warn: #f85149; --vp-amber: #d29922;
+        --vp-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      body {
+        margin: 0; background: #08090c; color: var(--vp-text);
+        font: 14px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        padding: 40px 32px 80px;
+      }
+      h1 { font-size: 22px; font-weight: 680; letter-spacing: -0.02em; margin: 0 0 4px; }
+      .sub { color: var(--vp-muted); margin: 0 0 34px; max-width: 70ch; }
+      .grid {
+        display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+        gap: 30px 26px; align-items: start;
+      }
+      .cell { display: flex; flex-direction: column; gap: 12px; }
+      .cap { font-size: 13px; }
+      .cap b { color: var(--vp-text); font-weight: 640; }
+      .cap .tag {
+        font-family: var(--vp-mono); font-size: 10.5px; color: var(--vp-accent);
+        border: 1px solid rgba(76,141,255,.3); border-radius: 5px; padding: 1px 6px;
+        margin-left: 6px;
+      }
+      .cap p { color: var(--vp-muted); font-size: 12.5px; margin: 4px 0 0; }
+      .stage {
+        display: flex; align-items: flex-start; justify-content: center;
+        padding: 22px; border-radius: 14px;
+        background: radial-gradient(120% 100% at 50% 0%, rgba(88,166,255,.05), transparent 60%), #0d1117;
+        border: 1px solid #1b212b; min-height: 90px;
+      }
+      /* the panels are position:fixed in the extension; make them flow here */
+      .stage .vp-panel, .stage .vp-pill, .stage #vp-popup { position: static; }
+      #vp-popup { border: 1px solid var(--vp-border); border-radius: 12px; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <h1>voice-pr — hub state gallery</h1>
+    <p class="sub">
+      Every panel below is the <b>real extension UI</b>: <code>extension/hub.js</code>'s
+      <code>renderHub()</code> over fixture data, styled by <code>extension/content.css</code>.
+      This is the D3 + D1 build — the hub is the home, recording is one explicit tap,
+      and each state-matrix row lands on its own surface.
+    </p>
+    <div class="grid" id="grid"></div>
+
+    <script src="../extension/hub.js"></script>
+    <script>
+      const grid = document.getElementById("grid");
+      const PR = "https://github.com/acme/checkout/pull/7";
+
+      // Build a hub panel frame around renderHub output for a given fixture.
+      function hubPanel(state) {
+        const panel = document.createElement("div");
+        panel.className = "vp-panel vp-hub-panel";
+        const bar = document.createElement("header");
+        bar.className = "vp-bar";
+        bar.innerHTML =
+          '<span class="vp-hub-title">🎙 voice-pr</span><span class="vp-bar-gap"></span>' +
+          '<button class="vp-icon vp-x">✕</button>';
+        const body = document.createElement("div");
+        body.className = "vp-hub-body";
+        body.appendChild(window.VoicePrHub.renderHub(document, state));
+        panel.append(bar, body);
+        return panel;
+      }
+
+      function cell(caption, tag, note, node) {
+        const c = document.createElement("div");
+        c.className = "cell";
+        const cap = document.createElement("div");
+        cap.className = "cap";
+        cap.innerHTML = `<b>${caption}</b><span class="tag">${tag}</span>` + (note ? `<p>${note}</p>` : "");
+        const stage = document.createElement("div");
+        stage.className = "stage";
+        stage.appendChild(node);
+        c.append(cap, stage);
+        grid.appendChild(c);
+      }
+
+      const job = (n, status, label, extra) => Object.assign(
+        { prUrl: `https://github.com/acme/checkout/pull/${n}`, prNumber: n, status, label, updatedAt: 1000 - n },
+        extra || {}
+      );
+
+      // ---- pill surfaces (collapsed) -----------------------------------------
+      const pillIdle = document.createElement("div");
+      pillIdle.className = "vp-pill";
+      pillIdle.innerHTML =
+        '<button class="vp-pill-open">🎙️ Review with voice</button>' +
+        '<button class="vp-pill-rec" title="Record now">⏺</button>';
+      cell("Collapsed pill — idle", "pill", "The quiet resting state. Main target opens the hub; the ⏺ is the author's record deep-link.", pillIdle);
+
+      const pillBadge = document.createElement("div");
+      pillBadge.className = "vp-pill";
+      pillBadge.innerHTML =
+        '<button class="vp-pill-open">🎙️ Review with voice<span class="vp-pill-badge">3</span></button>' +
+        '<button class="vp-pill-rec" title="Record now">⏺</button>';
+      cell("Collapsed pill — others busy", "pill · badge", "3 jobs in flight on other PRs. The badge (mirrored to the toolbar icon, D1) is the signal that survives a collapsed panel.", pillBadge);
+
+      // ---- hub states (the state matrix) -------------------------------------
+      cell("Hub — zero PRs / idle", "state: idle",
+        "Opening lands here, never on a live mic (Law 1). Nothing in flight, one tap to record.",
+        hubPanel({ thisPr: { prUrl: PR, prNumber: 7 }, decision: { state: "idle" }, fleet: [] }));
+
+      cell("Hub — one active (recording on this PR)", "state: running",
+        "You dispatched on this PR; its job is highlighted and mirrors live (Law 2 — a refresh reattaches, never 'lost').",
+        hubPanel({
+          thisPr: { prUrl: PR, prNumber: 7 },
+          decision: { state: "running", job: job(7, "running", "Orchestrator working…") },
+          fleet: [job(7, "running", "Orchestrator working…")],
+        }));
+
+      cell("Hub — done · unseen", "state: done",
+        "Result surfaced as a card with the intent-trail link and a dismiss — pure observe (Law 3).",
+        hubPanel({
+          thisPr: { prUrl: PR, prNumber: 7 },
+          decision: { state: "done", job: job(7, "done", "Fixed retry backoff", { summary: "Fixed retry backoff; renamed fooSvc → paymentClient", workItemId: "W-4821", refinery: "passed", trailCommentUrl: "https://github.com/acme/checkout/pull/7#discussion" }) },
+          fleet: [job(7, "done", "Fixed retry backoff")],
+        }));
+
+      cell("Hub — failed", "state: failed",
+        "The reason is shown and the saved recording is one tap from a retry — no re-recording from zero.",
+        hubPanel({
+          thisPr: { prUrl: PR, prNumber: 9 },
+          decision: { state: "failed", job: job(9, "failed", "Bridge closed before finishing", { error: "connect ECONNREFUSED 127.0.0.1:4100" }) },
+          fleet: [job(9, "failed", "Bridge closed before finishing")],
+        }));
+
+      cell("Hub — un-dispatched draft (crash recovery)", "state: draft-unsent",
+        "A saved bundle with NO job behind it — the only case that offers a resend (Law 2 keeps this distinct from a running job).",
+        hubPanel({
+          thisPr: { prUrl: PR, prNumber: 5 },
+          decision: { state: "draft-unsent", pending: { audioB64: "x".repeat(240000), sessionId: "s-1" } },
+          fleet: [],
+        }));
+
+      // ---- the big one: fleet of 6, recording on this one --------------------
+      const fleet6 = [
+        job(7, "running", "Orchestrator working · commit 2/3"),
+        job(4, "done", "Added null-check + test"),
+        job(11, "running", "Transcribing audio…"),
+        job(9, "failed", "Bridge closed — retry"),
+        job(2, "queued", "Queued · position 2"),
+        job(15, "done", "Renamed fooSvc → paymentClient"),
+      ];
+      cell("Hub — 6 PRs in flight, recording on #7", "state: running · fleet",
+        "The whole breadth: this PR highlighted at top, five others below in every status. This is the command center the memo asked for.",
+        hubPanel({
+          thisPr: { prUrl: PR, prNumber: 7 },
+          decision: { state: "running", job: fleet6[0] },
+          fleet: fleet6,
+        }));
+
+      // ---- toolbar popup (D1) on any tab -------------------------------------
+      const popup = document.createElement("div");
+      popup.id = "vp-popup";
+      popup.style.width = "300px";
+      const proot = document.createElement("div");
+      proot.id = "vp-popup-root";
+      proot.style.cssText = "padding:12px;display:flex;flex-direction:column;gap:10px";
+      const { STATUS_META, prNumberOf } = window.VoicePrHub;
+      const phead = document.createElement("div");
+      phead.className = "vp-popup-head";
+      phead.style.cssText = "display:flex;justify-content:space-between;border-bottom:1px solid var(--vp-border-soft);padding-bottom:9px";
+      phead.innerHTML = '<span style="font-weight:650">🎙 voice-pr</span><span style="font-family:var(--vp-mono);font-size:11px;color:var(--vp-muted)">6 PRs · 3 active</span>';
+      proot.appendChild(phead);
+      const plist = document.createElement("div");
+      plist.className = "vp-hub-list";
+      for (const j of fleet6) {
+        const meta = STATUS_META[j.status] || { dot: "queue" };
+        const row = document.createElement("div");
+        row.className = "vp-hubjob";
+        row.innerHTML = `<span class="vp-hubdot ${meta.dot}"></span><span class="vp-hubpr">#${prNumberOf(j)}</span><span class="vp-hublabel">${j.label}</span><span class="vp-hubjump">↗</span>`;
+        plist.appendChild(row);
+      }
+      proot.appendChild(plist);
+      popup.appendChild(proot);
+      cell("Toolbar popup (D1) — visible on any tab", "popup", "Opened from the extension icon; the fleet without needing a GitHub PR tab open. Non-GitHub tabs included.", popup);
+    </script>
+  </body>
+</html>

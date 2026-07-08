@@ -54,13 +54,30 @@
 }
 
 /* ---- trigger pill --------------------------------------------------------- */
+/* Two targets in one capsule: the main "open the hub" button and a small record
+   deep-link (⏺) that jumps straight to capture for power authors (Law 1: still
+   an explicit action). */
 .vp-pill {
-  display: inline-flex; align-items: center; gap: 8px;
-  background: var(--vp-accent-deep); color: #fff; border: 0; border-radius: 999px;
-  padding: 11px 18px; font: inherit; font-weight: 600; cursor: pointer;
+  display: inline-flex; align-items: stretch; gap: 0;
+  border-radius: 999px; overflow: hidden;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
-.vp-pill:hover { filter: brightness(1.08); }
+.vp-pill-open, .vp-pill-rec {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--vp-accent-deep); color: #fff; border: 0;
+  font: inherit; font-weight: 600; cursor: pointer;
+}
+.vp-pill-open { padding: 11px 16px; }
+.vp-pill-rec {
+  padding: 11px 14px; font-size: 15px; line-height: 1;
+  border-left: 1px solid rgba(255, 255, 255, 0.18);
+}
+.vp-pill-open:hover, .vp-pill-rec:hover { filter: brightness(1.12); }
+.vp-pill-badge {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px;
+  padding: 0 5px; border-radius: 999px; background: var(--vp-warn); color: #fff;
+  font-family: var(--vp-mono); font-size: 11px; font-weight: 700;
+}
 
 /* ---- panel shell ---------------------------------------------------------- */
 .vp-panel {
@@ -371,3 +388,102 @@
   #voicepr-root *, #vp-gazedot, #vp-laser { animation: none !important; transition: none !important; scroll-behavior: auto; }
   .vp-clock.live::before { animation: none; }
 }
+
+/* ============================================================================
+   HUB (D3 + D1) — the monitor-first surface. Opening lands here, never on a
+   live mic. The fleet + this-PR status cards are pure show; the one blue
+   "Record on this PR" button is the sole path into capture.
+   ============================================================================ */
+.vp-hub-panel { height: auto; max-height: min(600px, 82vh); }
+.vp-hub-title { font-weight: 650; font-size: 13px; color: var(--vp-text); }
+.vp-back { font-size: 20px; }
+
+.vp-hub-body {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 12px; overflow-y: auto;
+}
+.vp-hub { display: flex; flex-direction: column; gap: 11px; }
+
+/* the one explicit record affordance */
+.vp-hub-record {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 12px 14px; border: 0; border-radius: 10px;
+  background: var(--vp-accent-deep); color: #fff;
+  font: inherit; font-weight: 650; font-size: 13.5px; cursor: pointer;
+}
+.vp-hub-record:hover { filter: brightness(1.1); }
+.vp-hub-record-dot {
+  width: 11px; height: 11px; border-radius: 50%; flex: none;
+  background: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
+}
+.vp-hub-record-pr {
+  margin-left: auto; font-family: var(--vp-mono); font-size: 12px;
+  color: rgba(255, 255, 255, 0.7); font-weight: 600;
+}
+
+/* section header for the fleet list */
+.vp-hub-sectlabel {
+  display: flex; align-items: center; justify-content: space-between;
+  font-family: var(--vp-mono); font-size: 10px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--vp-faint); margin-top: 2px;
+}
+.vp-hub-count { color: var(--vp-muted); }
+.vp-hub-empty {
+  color: var(--vp-faint); font-style: italic; font-size: 12px;
+  padding: 6px 2px 2px;
+}
+
+/* the fleet — one row per PR */
+.vp-hub-list { display: flex; flex-direction: column; gap: 6px; }
+.vp-hubjob {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  background: var(--vp-canvas); border: 1px solid var(--vp-border-soft);
+}
+.vp-hubjob:hover { border-color: var(--vp-border); background: var(--vp-subtle); }
+.vp-hubjob.self {
+  border-color: rgba(76, 141, 255, 0.4); background: rgba(76, 141, 255, 0.08);
+}
+.vp-hubdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.vp-hubdot.run { background: var(--vp-accent); animation: vp-pulse 1.8s infinite; }
+.vp-hubdot.done { background: var(--vp-ok); }
+.vp-hubdot.queue { background: var(--vp-amber); }
+.vp-hubdot.fail { background: var(--vp-warn); }
+.vp-hubpr {
+  font-family: var(--vp-mono); font-size: 11.5px; font-weight: 600;
+  color: var(--vp-text); flex: none;
+}
+.vp-hublabel {
+  font-size: 11.5px; color: var(--vp-muted); flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vp-hubjump { color: var(--vp-faint); font-size: 12px; flex: none; }
+.vp-hubjob:hover .vp-hubjump { color: var(--vp-text); }
+
+/* this-PR status / result / recovery card */
+.vp-hubcard {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 12px; border-radius: 10px;
+  background: var(--vp-canvas); border: 1px solid var(--vp-border-soft);
+}
+.vp-hubcard.ok { border-color: rgba(63, 185, 80, 0.35); }
+.vp-hubcard.fail { border-color: rgba(248, 81, 73, 0.4); }
+.vp-hubcard.warn { border-color: rgba(210, 153, 34, 0.4); }
+.vp-hubcard-head { font-weight: 640; font-size: 12.5px; color: var(--vp-text); }
+.vp-hubcard.ok .vp-hubcard-head { color: var(--vp-ok); }
+.vp-hubcard.fail .vp-hubcard-head { color: var(--vp-warn); }
+.vp-hubcard-sub { font-size: 11.5px; color: var(--vp-muted); line-height: 1.45; }
+.vp-hublink { font-size: 11.5px; color: var(--vp-accent); text-decoration: none; }
+.vp-hublink:hover { text-decoration: underline; }
+.vp-hubcard-actions { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+.vp-hubbtn {
+  border: 0; border-radius: 8px; padding: 7px 12px;
+  background: var(--vp-accent-deep); color: #fff;
+  font: inherit; font-weight: 600; font-size: 12px; cursor: pointer;
+}
+.vp-hubbtn:hover { filter: brightness(1.1); }
+.vp-hubbtn.ghost {
+  background: transparent; color: var(--vp-muted);
+  border: 1px solid var(--vp-border);
+}
+.vp-hubbtn.ghost:hover { background: var(--vp-subtle); color: var(--vp-text); filter: none; }

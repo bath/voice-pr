@@ -102,7 +102,7 @@
     "gaze.": "extension/content.js + extension/gaze.js — WebGazer overlay",
     "preflight.": "server.js runPreflight() — dependency probes",
     "mic.": "extension/content.js start() — navigator.mediaDevices.getUserMedia",
-    "recover.": "extension/content.js checkPendingOnLoad() — crash recovery",
+    "recover.": "extension/content.js initSurface() + extension/hub.js classifyPrState — on-load state decision & crash recovery",
     "bridge.": "server.js — HTTP endpoints",
     "exec.": "lib/exec.js — child processes (gh/git/docker/ffmpeg/whisper)",
     "pipeline.": "lib/pipeline.js — session → PR → orchestrator submit",
@@ -265,9 +265,21 @@
   const root = document.createElement("div");
   root.id = "voicepr-root";
   root.innerHTML = `
-    <button id="vp-pill" class="vp-pill">🎙️ Review with voice</button>
+    <div id="vp-pill" class="vp-pill">
+      <button id="vp-pill-open" class="vp-pill-open">🎙️ Review with voice<span id="vp-pill-badge" class="vp-pill-badge" hidden></span></button>
+      <button id="vp-pill-rec" class="vp-pill-rec" title="Record now on this PR (⌥⇧R)">⏺</button>
+    </div>
+    <div id="vp-hub-panel" class="vp-panel vp-hub-panel" hidden>
+      <header class="vp-bar">
+        <span class="vp-hub-title">🎙 voice-pr</span>
+        <span class="vp-bar-gap"></span>
+        <button id="vp-hub-close" class="vp-icon vp-x" title="Close">✕</button>
+      </header>
+      <div id="vp-hub-body" class="vp-hub-body"></div>
+    </div>
     <div id="vp-panel" class="vp-panel" hidden>
       <header class="vp-bar">
+        <button id="vp-back" class="vp-icon vp-back" title="Back to background work">‹</button>
         <button id="vp-toggle" class="vp-rec" title="Start / pause recording">⏺</button>
         <span id="vp-clock" class="vp-clock">0:00</span>
         <span class="vp-bar-gap"></span>
@@ -330,6 +342,13 @@
 
   const $ = (id) => root.querySelector(id);
   const pill = $("#vp-pill"),
+    pillOpen = $("#vp-pill-open"),
+    pillRec = $("#vp-pill-rec"),
+    pillBadge = $("#vp-pill-badge"),
+    hubPanel = $("#vp-hub-panel"),
+    hubBody = $("#vp-hub-body"),
+    hubClose = $("#vp-hub-close"),
+    backBtn = $("#vp-back"),
     panel = $("#vp-panel"),
     ctxEl = $("#vp-context"),
     lookingEl = $("#vp-looking"),
@@ -533,8 +552,61 @@
     toggleBtn.classList.remove("vp-recording");
   }
 
-  // One click = fresh session + open + start recording (context loads in parallel).
-  pill.addEventListener("click", () => {
+  // ---------- hub-first surface (D3 + D1) -------------------------------------
+  // Opening lands on the hub (monitor), never on a live mic. The hub is a pure
+  // render of VoicePrHub.renderHub over this PR's registry state + the fleet;
+  // every actionable element carries data-vp-action and this one delegated
+  // handler wires them. Recording is a deliberate action launched FROM the hub.
+  const JOBS_KEY = "voicepr:jobs";
+  let fleetJobs = {};
+  function loadFleet(cb) {
+    try { chrome.storage?.local?.get(JOBS_KEY, (o) => cb(o?.[JOBS_KEY] || {})); }
+    catch { cb({}); }
+  }
+  const jobTabId = (pr) => (fleetJobs[pr] && fleetJobs[pr].originTabId) || null;
+
+  function updatePillBadge(jobs) {
+    const n = Object.values(jobs || {}).filter((j) => window.VoicePrHub.isActive(j.status)).length;
+    pillBadge.hidden = n === 0;
+    pillBadge.textContent = n ? String(n) : "";
+  }
+
+  function renderHubViewWith(jobs) {
+    fleetJobs = jobs || {};
+    const job = fleetJobs[prUrl] || null;
+    Promise.all([loadPending(), loadHandoff()]).then(([pending, handoff]) => {
+      const decision = window.VoicePrHub.classifyPrState({ job, pending, handoff });
+      const hub = window.VoicePrHub.renderHub(document, {
+        thisPr: { prUrl, prNumber: m[3] },
+        decision,
+        fleet: Object.values(fleetJobs),
+      });
+      hubBody.innerHTML = "";
+      hubBody.appendChild(hub);
+    });
+  }
+  const renderHubView = () => loadFleet(renderHubViewWith);
+
+  // Show the hub panel (Law 1: opening never touches the mic).
+  function showHub(jobsMaybe) {
+    captureOpen = false;
+    panel.hidden = true;
+    pill.hidden = true;
+    hubPanel.hidden = false;
+    if (jobsMaybe) renderHubViewWith(jobsMaybe);
+    else renderHubView();
+  }
+  function openHub() {
+    trace("hub.open", { pr: prUrl });
+    teardown(); // cancel any half-open capture; reopening the hub is always clean
+    showHub();
+  }
+
+  // Explicit capture — the ONLY path that arms the microphone (Law 1). Reached
+  // by the hub's "Record on this PR" button, the pill's record deep-link, and
+  // the keyboard shortcut: every one an explicit user action, never a side
+  // effect of opening or reloading.
+  function enterCapture() {
     teardown();
     resetUI();
     logEmpty("scroll the diff and talk — the file:line you're reading shows up here.");
@@ -545,6 +617,7 @@
     lastError = null;
     trace("panel.open", { pr: prUrl });
     captureOpen = true;
+    hubPanel.hidden = true;
     panel.hidden = false;
     pill.hidden = true;
     loadContext();
@@ -560,12 +633,95 @@
     renderHud();
     start();
     runPreflight(); // validate the whole record→submit chain up front, for everyone
+  }
+
+  // Switch to the capture panel to show dispatch progress WITHOUT recording —
+  // used when resending a recovered/failed bundle (no re-recording from zero).
+  function enterDispatchView() {
+    teardown();
+    resetUI();
+    captureOpen = false;
+    hubPanel.hidden = true;
+    panel.hidden = false;
+    pill.hidden = true;
+    toggleBtn.disabled = true;
+    toggleBtn.textContent = "⏺";
+    toggleBtn.classList.remove("vp-recording");
+    sendBtn.disabled = true;
+    sendBtn.textContent = "Sent ✓";
+    if (clockEl) clockEl.classList.remove("live");
+    lookingEl.textContent = "";
+    setContextChips();
+    pipe = renderPipeline();
+  }
+
+  function hubResend() {
+    loadPending().then((pending) => {
+      if (!pending) return renderHubView();
+      sessionId = pending.sessionId || sessionId;
+      dispatched = true;
+      trace("recover.resend", {});
+      enterDispatchView();
+      line("resending recovered recording…");
+      sendBundle(pending);
+    });
+  }
+  function hubDiscard() {
+    trace("recover.discard", {});
+    clearPending();
+    renderHubView(); // stay in the hub; it re-draws to idle
+  }
+  function hubAction(el) {
+    const action = el.getAttribute("data-vp-action");
+    const pr = el.getAttribute("data-vp-pr");
+    if (action === "record") return enterCapture();
+    if (action === "jump") return chrome.runtime.sendMessage({ type: "focus-pr", prUrl: pr, tabId: jobTabId(pr) });
+    if (action === "dismiss") return chrome.runtime.sendMessage({ type: "dismiss-job", prUrl: pr }, () => renderHubView());
+    if (action === "retry" || action === "resend") return hubResend();
+    if (action === "discard") return hubDiscard();
+  }
+  hubBody.addEventListener("click", (e) => {
+    const el = e.target.closest("[data-vp-action]");
+    if (el) hubAction(el);
+  });
+  hubBody.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const el = e.target.closest("[data-vp-action]");
+    if (el) { e.preventDefault(); hubAction(el); }
+  });
+
+  pillOpen.addEventListener("click", openHub);
+  pillRec.addEventListener("click", enterCapture);
+  hubClose.addEventListener("click", () => {
+    trace("hub.close", {});
+    hubPanel.hidden = true;
+    pill.hidden = false;
+  });
+  backBtn.addEventListener("click", () => {
+    trace("panel.back", {});
+    teardown(); // leaving capture cancels the un-dispatched session
+    showHub();
   });
   $("#vp-close").addEventListener("click", () => {
     trace("panel.close", {});
     teardown(); // closing cancels the current session; reopening starts fresh
     panel.hidden = true;
     pill.hidden = false;
+  });
+
+  // Keyboard shortcut relayed by the background worker (author fast-path).
+  chrome.runtime?.onMessage?.addListener((msg) => {
+    if (msg?.type === "vp-record-now") enterCapture();
+  });
+
+  // Live mirror: when the central registry changes, keep the pill badge honest
+  // and — if the hub is open — re-draw it so a running job's status updates in
+  // place (Law 2: running work is reattached, never reported as lost).
+  chrome.storage?.onChanged?.addListener((changes, area) => {
+    if (area !== "local" || !changes[JOBS_KEY]) return;
+    const jobs = changes[JOBS_KEY].newValue || {};
+    updatePillBadge(jobs);
+    if (!hubPanel.hidden) renderHubViewWith(jobs);
   });
 
   // ---------- readiness check -------------------------------------------------
@@ -1324,98 +1480,31 @@
     return (s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   }
 
-  // ---------- recover a pending recording after a refresh/crash ---------------
-  // On load, decide from the persisted state (bundle + hand-off marker) what to
-  // show. A bundle that was never handed off is a genuine crash: surface it for
-  // resend. A bundle already accepted by the orchestrator is NOT a crash — the
-  // work runs server-side; a reload just raced the terminal event (#46), so we
-  // show an "awaiting result" note, never a resend that would duplicate it.
-  function recoveryHeader(pending) {
-    const kb = Math.round(((pending.audioB64?.length || 0) * 0.75) / 1024);
-    const ago = pending.savedAt ? Math.round((Date.now() - pending.savedAt) / 60000) : null;
-    captureOpen = false;
-    panel.hidden = false;
-    pill.hidden = true;
-    toggleBtn.disabled = true;
-    sendBtn.disabled = true;
-    sendBtn.textContent = "Sent ✓";
-    setContextChips();
-    statusEl.innerHTML = "";
-    return { kb, ago };
-  }
-  function showUndispatchedRecovery(pending) {
-    const { kb, ago } = recoveryHeader(pending);
-    trace("recover.undispatched", { savedAt: pending.savedAt || null, hasAudio: !!pending.audioB64 });
-    logRow(
-      `↻ Recovered an un-dispatched recording${ago != null ? ` from ${ago} min ago` : ""}${
-        kb ? ` (~${kb}KB audio)` : ""
-      }.`,
-      { cls: "milestone" }
-    );
-    logRow("The last dispatch didn't complete. Resend it to the orchestrator, or discard.", { cls: "reassure" });
-    const wrap = document.createElement("div");
-    wrap.className = "vp-actions-row";
-    const resend = document.createElement("button");
-    resend.className = "vp-send";
-    resend.textContent = "↻ Resend to orchestrator";
-    resend.addEventListener("click", () => {
-      wrap.remove();
-      sessionId = pending.sessionId || sessionId;
-      dispatched = true;
-      trace("recover.resend", {});
-      line("resending recovered recording…");
-      sendBundle(pending);
+  // ---------- on-load surface decision (hub-first, Laws 1 & 2) ----------------
+  // No auto-recording, ever (Law 1). On load we consult the central registry
+  // BEFORE the saved-pending key (Law 2): a running or finished job for this PR
+  // is reattached and mirrored live in the hub, and only a bundle with no job
+  // behind it surfaces as a genuine "un-dispatched" recovery. Whenever THIS PR
+  // has something to show — running, done, failed, awaiting, or a real draft —
+  // we open straight to the hub so a refresh just re-draws it. When this PR is
+  // idle we leave the quiet pill; its badge (and the toolbar badge) still
+  // reflect work in flight on other PRs.
+  function initSurface() {
+    loadFleet((jobs) => {
+      updatePillBadge(jobs);
+      const job = jobs[prUrl] || null;
+      Promise.all([loadPending(), loadHandoff()]).then(([pending, handoff]) => {
+        const decision = window.VoicePrHub.classifyPrState({ job, pending, handoff });
+        if (decision.state === "idle") return; // quiet pill; nothing to surface
+        if (pending) sessionId = pending.sessionId || sessionId; // tag recovery traces
+        trace("recover.found", {
+          mode: decision.state,
+          savedAt: pending?.savedAt || null,
+          hasAudio: !!pending?.audioB64,
+        });
+        showHub(jobs);
+      });
     });
-    const discard = document.createElement("button");
-    discard.className = "vp-secondary";
-    discard.textContent = "Discard";
-    discard.addEventListener("click", () => {
-      trace("recover.discard", {});
-      clearPending();
-      teardown();
-      panel.hidden = true;
-      pill.hidden = false;
-    });
-    wrap.appendChild(resend);
-    wrap.appendChild(discard);
-    statusEl.appendChild(wrap);
   }
-  function showAwaitingResult(pending, workItemId) {
-    const { ago } = recoveryHeader(pending);
-    trace("recover.awaiting-result", { workItemId: workItemId || null, savedAt: pending.savedAt || null });
-    logRow(
-      `↻ This recording was handed to the orchestrator${workItemId ? ` (work item ${workItemId})` : ""}${
-        ago != null ? `, ${ago} min ago` : ""
-      }.`,
-      { cls: "milestone" }
-    );
-    logRow(
-      "It runs server-side — this reload just lost the live view, not the work. Check the PR for new commits; there's nothing to resend.",
-      { cls: "reassure" }
-    );
-    const wrap = document.createElement("div");
-    wrap.className = "vp-actions-row";
-    const dismiss = document.createElement("button");
-    dismiss.className = "vp-send";
-    dismiss.textContent = "Got it";
-    dismiss.addEventListener("click", () => {
-      trace("recover.awaiting-dismiss", {});
-      clearPending(); // handed off; the local bundle no longer serves recovery
-      teardown();
-      panel.hidden = true;
-      pill.hidden = false;
-    });
-    wrap.appendChild(dismiss);
-    statusEl.appendChild(wrap);
-  }
-  async function checkPendingOnLoad() {
-    const [pending, handoff] = await Promise.all([loadPending(), loadHandoff()]);
-    const decision = window.VoicePrRecovery.decideRecovery(pending, handoff);
-    if (!decision.show) return;
-    sessionId = pending.sessionId || sessionId; // tag recovery traces to the recovered session
-    trace("recover.found", { mode: decision.mode, savedAt: pending.savedAt || null, hasAudio: !!pending.audioB64 });
-    if (decision.mode === "awaiting-result") showAwaitingResult(pending, decision.workItemId);
-    else showUndispatchedRecovery(pending);
-  }
-  checkPendingOnLoad();
+  initSurface();
 })();

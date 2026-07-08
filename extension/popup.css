@@ -1,0 +1,44 @@
+/* Toolbar-popup (D1) — the global monitor surface, reachable from any tab. Same
+   Primer-dark tokens + fleet-row look as the in-page hub, scoped to #vp-popup. */
+#vp-popup {
+  --vp-canvas: #0d1117; --vp-panel: #161b22; --vp-subtle: #21262d;
+  --vp-border: #30363d; --vp-border-soft: #262c34; --vp-text: #e6edf3;
+  --vp-muted: #8b949e; --vp-faint: #6e7681; --vp-accent: #4c8dff;
+  --vp-ok: #3fb950; --vp-warn: #f85149; --vp-amber: #d29922;
+  --vp-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  margin: 0; width: 300px; background: var(--vp-panel); color: var(--vp-text);
+  font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+#vp-popup * { box-sizing: border-box; }
+#vp-popup-root { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+.vp-popup-head {
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--vp-border-soft); padding-bottom: 9px;
+}
+.vp-popup-title { font-weight: 650; }
+.vp-popup-count {
+  font-family: var(--vp-mono); font-size: 11px; color: var(--vp-muted);
+}
+.vp-popup-empty { color: var(--vp-faint); font-style: italic; font-size: 12px; }
+
+.vp-hub-list { display: flex; flex-direction: column; gap: 6px; }
+.vp-hubjob {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  background: var(--vp-canvas); border: 1px solid var(--vp-border-soft);
+  color: var(--vp-text); font: inherit;
+}
+.vp-hubjob:hover { border-color: var(--vp-border); background: var(--vp-subtle); }
+.vp-hubdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.vp-hubdot.run { background: var(--vp-accent); }
+.vp-hubdot.done { background: var(--vp-ok); }
+.vp-hubdot.queue { background: var(--vp-amber); }
+.vp-hubdot.fail { background: var(--vp-warn); }
+.vp-hubpr { font-family: var(--vp-mono); font-size: 11.5px; font-weight: 600; flex: none; }
+.vp-hublabel {
+  font-size: 11.5px; color: var(--vp-muted); flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.vp-hubjump { color: var(--vp-faint); font-size: 12px; flex: none; }
+.vp-hubjob:hover .vp-hubjump { color: var(--vp-text); }

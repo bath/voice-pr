@@ -41,11 +41,49 @@ call, and session streaming all exercised end-to-end.
 | **What comments are for** | An **anchored intent trail**: each committed change gets a comment pinned to the line, explaining why it changed and linking the commit. They stay as a record. |
 | **Confident items** | Real edits, **one commit per item**, pushed to the branch. |
 | **Unclear items** | **Not acted on.** Batched into one comment saying your direction wasn't clear enough — so a wrong guess never lands silently. |
-| **Activation** | **Explicit** — click record in the extension, then scroll + talk. No always-on mic. |
+| **Activation** | **Explicit, hub-first** — opening the panel lands on the *hub* (your dispatched-work fleet), never a live mic. Recording is one deliberate tap (or ⌥⇧R). Opening is never consenting. |
 | **Anchoring** | **Auto from viewport** — each spoken chunk pins to the `file:line` centered on screen when you said it. Say "over in utils…" and the agent follows meaning over the anchor. |
 | **Context** | On session start the bridge detects the **Jira key** + **CI status**; the polecat pulls the **ticket** and **Slack** threads via its MCP tools at work-time. |
 | **Execution** | Via the **orchestrator** (mayor → polecat in a worktree → refinery merge onto the PR branch). Never force-pushes, rebases, or amends. |
 | **Safety net** | Everything lands as **commits you review before merge**; unclear work is surfaced as a comment, not guessed. |
+
+## The two-minds hub (D3 + D1)
+
+voice-pr does two jobs that pull in opposite directions: **create** (dictate
+changes into *this* PR — instant, in-context) and **monitor** (watch the fleet
+of work you've dispatched across *all* PRs — ambient, glanceable). Earlier they
+shared one door that opened straight into a live mic, so a reload or a glance
+could arm recording or report live work as "lost."
+
+The fix (the "one door, two rooms" memo's recommendation):
+
+- **Hub-first (D3).** Opening the panel lands on the hub — a monitor surface
+  showing every PR with work in flight, this PR's own job highlighted, each
+  state rendered as its own card. **Record on this PR** sits on top; recording is
+  a deliberate tap that expands into the capture view. The default is always to
+  *show*, never to *capture*.
+- **A global badge (D1).** The active-job count is mirrored onto the toolbar
+  icon (and a compact popup), so it's visible on **any** tab — even a non-GitHub
+  one — the moment the in-page panel is collapsed.
+
+Three invariants hold regardless (see `extension/hub.js`):
+
+1. **Opening is not consenting** — loading, reloading, or opening the panel
+   never starts capture; the mic arms only on an explicit record action.
+2. **Running is not lost** — on load the hub consults the central job registry
+   *before* the saved-pending key, so an in-flight or finished job reattaches
+   and mirrors live; a resend is offered only for a draft with no job behind it.
+3. **Observing is first-class** — the fleet and every status card are pure show;
+   none route through, or hint at, the record flow.
+
+The hub is a pure render of state (`VoicePrHub.renderHub`), so every screen is
+unit-testable (`test/hub.test.js`) and screenshot-able without a browser. See
+the whole state matrix rendered at once:
+
+```bash
+# open the real components, driven by fixtures, for every state
+open scripts/hub-gallery.html
+```
 
 ## Quick start (Chrome extension)
 
@@ -60,12 +98,17 @@ node server.js                      # → http://localhost:4100
    manual step is unavoidable.)
 3. Open any PR's **Files changed** tab on GitHub. A **🎙️ Review with voice**
    pill appears bottom-right.
-4. Click it → **Start recording** → scroll and talk. Each comment shows the
-   `file:line` it anchored to. (First time, Chrome asks for mic permission on
-   github.com. No mic / not Chrome? Type comments into the box instead — same
-   result.)
-5. **Hand to orchestrator →**. Close the tab if you want; the PR updates in a
-   few minutes. The panel also streams live progress and links the result.
+4. Click it → the **hub** opens: your fleet of dispatched work across every PR,
+   with this PR's own job highlighted, and a **Record on this PR** button on top.
+   Opening never arms the mic — the hub is a monitor, first.
+5. Tap **Record on this PR** (or the pill's ⏺, or press **⌥⇧R**) → scroll and
+   talk. Each comment shows the `file:line` it anchored to. (First time, Chrome
+   asks for mic permission on github.com. No mic / not Chrome? Type comments
+   into the box instead — same result.)
+6. **Dispatch →**. Close the tab if you want; the PR updates in a few minutes.
+   The hub reattaches to the running job on reload, and the toolbar-icon badge
+   shows the live active-job count on **any** tab. Click the icon for the fleet
+   without a PR tab open.
 
 Experimental gaze runs WebGazer inside a transparent `chrome-extension://`
 overlay, not in the GitHub content-script world. That keeps webcam permission

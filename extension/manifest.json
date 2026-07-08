@@ -4,11 +4,21 @@
   "version": "0.1.0",
   "description": "Scroll your PR diff and talk (point with your mouse, and — experimental — look). Comments anchor to what you're attending to and are handed to your orchestrator. Local Whisper STT; webcam gaze runs on-device.",
   "background": { "service_worker": "background.js" },
-  "permissions": ["storage", "unlimitedStorage"],
+  "action": {
+    "default_title": "voice-pr — background work",
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "record-on-pr": {
+      "suggested_key": { "default": "Alt+Shift+R" },
+      "description": "voice-pr: start recording on the current PR"
+    }
+  },
+  "permissions": ["storage", "unlimitedStorage", "tabs"],
   "content_scripts": [
     {
       "matches": ["https://github.com/*/*/pull/*"],
-      "js": ["anchors.js", "recovery.js", "content.js"],
+      "js": ["anchors.js", "recovery.js", "hub.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

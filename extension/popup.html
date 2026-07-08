@@ -1,0 +1,14 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body id="vp-popup">
+    <div id="vp-popup-root"></div>
+    <!-- hub.js exports the shared status vocabulary; popup.js renders the fleet.
+         Both are 'self' scripts — no inline JS, so the extension-page CSP holds. -->
+    <script src="hub.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
