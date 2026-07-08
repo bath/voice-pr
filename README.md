@@ -189,6 +189,7 @@ file, or `ANTHROPIC_API_KEY`). OAuth tokens expire — if the mayor/polecats log
 | `VOICE_PR_WHISPER_MODEL` | `~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin` | GGML model path |
 | `VOICE_PR_ARCHIVE_DIR` | `~/.voice-pr/sessions` | where session fixtures + traces are saved |
 | `VOICE_PR_LOG_MAX_BYTES` | `5000000` | rotate the global `bridge.ndjson` past this size |
+| `VOICE_PR_TRACE_EXEC` | _(unset)_ | mirror `exec.*` child-process events to the console too (they're always in the NDJSON logs); off by default to keep the poll loop from spamming the terminal |
 
 ## Session archive (fixtures)
 
