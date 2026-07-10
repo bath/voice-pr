@@ -132,6 +132,20 @@
       repo ? el("span", { class: "vp-hubrepo", text: repo }) : null,
       el("span", { class: "vp-hubpr", text: `#${prNumberOf(job)}` }),
     ]);
+    // A finished (terminal) run lingers in the fleet with nothing to remove it —
+    // over days these pile up. Give every terminal row its own ✕ to clear that
+    // one job from the registry. Active rows keep only the jump: dismissing a
+    // running job would drop the live view of work that's still going.
+    const clear = isTerminal(job.status)
+      ? el("button", {
+          class: "vp-hubclear",
+          "data-vp-action": "dismiss",
+          "data-vp-pr": job.prUrl,
+          title: "Clear this finished run",
+          "aria-label": `Clear finished run for #${prNumberOf(job)}`,
+          text: "✕",
+        })
+      : null;
     const row = el(
       "div",
       { class: "vp-hubjob" + (self ? " self" : ""), "data-vp-action": "jump", "data-vp-pr": job.prUrl, role: "button", tabindex: "0" },
@@ -142,6 +156,7 @@
           el("div", { class: "vp-hublabel", text: job.label || (meta.verb || "…") }),
         ]),
         el("span", { class: "vp-hubjump", "aria-hidden": "true", text: "↗" }),
+        clear,
       ]
     );
     return row;
@@ -240,11 +255,24 @@
     if (card) hub.appendChild(card);
 
     // (Law 3) The fleet — pure monitor. Section header with the same count the
-    // toolbar badge shows, then one row per PR with this PR highlighted.
+    // toolbar badge shows, then one row per PR with this PR highlighted. When any
+    // runs have finished, a "Clear finished" control sweeps every terminal row at
+    // once (the per-row ✕ handles them one at a time).
+    const finishedCount = (fleet || []).filter((j) => isTerminal(j.status)).length;
     hub.appendChild(
       el("div", { class: "vp-hub-sectlabel" }, [
         el("span", { text: "Background work" }),
-        el("span", { class: "vp-hub-count", text: fleetCountLabel(fleet) }),
+        el("span", { class: "vp-hub-sectright" }, [
+          finishedCount
+            ? el("button", {
+                class: "vp-hub-clearall",
+                "data-vp-action": "clear-finished",
+                title: `Clear all ${finishedCount} finished run${finishedCount === 1 ? "" : "s"}`,
+                text: `Clear finished`,
+              })
+            : null,
+          el("span", { class: "vp-hub-count", text: fleetCountLabel(fleet) }),
+        ]),
       ])
     );
 

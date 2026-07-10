@@ -146,7 +146,10 @@ test("done card exposes the trail link + dismiss; failed card exposes retry", as
     fleet: [{ prUrl: "p", prNumber: 7, status: "done", label: "Fixed retry backoff", updatedAt: 1 }],
   });
   assert.equal(doneHub.all((n) => n.tag === "a" && n.getAttribute("href") === "https://x/1").length, 1);
-  assert.equal(doneHub.byAction("dismiss").length, 1);
+  // The card's own Dismiss button (a full vp-hubbtn). The terminal fleet row also
+  // carries a compact ✕ clear (vp-hubclear) — both are dismiss actions, so scope
+  // this assertion to the card button by class.
+  assert.equal(doneHub.all((n) => (n._class || "").includes("vp-hubbtn") && n.getAttribute("data-vp-action") === "dismiss").length, 1);
 
   const failHub = renderHub(fakeDoc, {
     thisPr: { prUrl: "p", prNumber: 9 },
@@ -154,6 +157,44 @@ test("done card exposes the trail link + dismiss; failed card exposes retry", as
     fleet: [{ prUrl: "p", prNumber: 9, status: "failed", label: "Bridge closed — retry", updatedAt: 1 }],
   });
   assert.equal(failHub.byAction("retry").length, 1);
+});
+
+test("terminal fleet rows carry a ✕ clear; active rows do not", async () => {
+  const { renderHub } = await loadHub();
+  const fleet = [
+    { prUrl: "https://github.com/o/r/pull/7", prNumber: 7, status: "running", label: "Working…", updatedAt: 3 },
+    { prUrl: "https://github.com/o/r/pull/4", prNumber: 4, status: "done", label: "Done", updatedAt: 2 },
+    { prUrl: "https://github.com/o/r/pull/9", prNumber: 9, status: "failed", label: "Failed", updatedAt: 1 },
+  ];
+  const hub = renderHub(fakeDoc, {
+    thisPr: { prUrl: "https://github.com/o/r/pull/1", prNumber: 1 },
+    decision: { state: "idle" },
+    fleet,
+  });
+  const clears = hub.all((n) => (n._class || "").includes("vp-hubclear"));
+  assert.equal(clears.length, 2, "one clear per terminal (done/failed) row, none on the running row");
+  // each clear removes exactly its own PR
+  assert.deepEqual(
+    clears.map((c) => c.getAttribute("data-vp-pr")).sort(),
+    ["https://github.com/o/r/pull/4", "https://github.com/o/r/pull/9"]
+  );
+});
+
+test("section header shows Clear-finished only when a run has finished", async () => {
+  const { renderHub } = await loadHub();
+  const withFinished = renderHub(fakeDoc, {
+    thisPr: { prUrl: "p", prNumber: 1 },
+    decision: { state: "idle" },
+    fleet: [{ prUrl: "p", prNumber: 1, status: "done", label: "Done", updatedAt: 1 }],
+  });
+  assert.equal(withFinished.byAction("clear-finished").length, 1);
+
+  const allActive = renderHub(fakeDoc, {
+    thisPr: { prUrl: "p", prNumber: 1 },
+    decision: { state: "running", job: { status: "running", prUrl: "p" } },
+    fleet: [{ prUrl: "p", prNumber: 1, status: "running", label: "Working…", updatedAt: 1 }],
+  });
+  assert.equal(allActive.byAction("clear-finished").length, 0, "no finished runs → no bulk clear");
 });
 
 test("draft-unsent hub shows resend + discard, no live job", async () => {

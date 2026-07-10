@@ -71,6 +71,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     updateJob(msg.prUrl, null).then(() => sendResponse({ ok: true }));
     return true;
   }
+  // hub "clear finished" — drop every terminal job in one write. Active jobs stay.
+  if (msg?.type === "clear-finished-jobs") {
+    clearFinishedJobs().then((removed) => sendResponse({ ok: true, removed }));
+    return true;
+  }
 });
 
 // ---------- central job registry -------------------------------------------
@@ -106,6 +111,25 @@ function updateJob(prUrl, patch) {
   });
   return writeChain;
 }
+// Sweep every terminal (done/failed/error) job from the registry in a single
+// serialized write. Active jobs are left in place. Returns the count removed.
+const TERMINAL = new Set(["done", "failed", "error"]);
+function clearFinishedJobs() {
+  writeChain = writeChain.then(async () => {
+    const map = await loadJobs();
+    let removed = 0;
+    for (const [prUrl, job] of Object.entries(map)) {
+      if (TERMINAL.has(job.status)) { delete map[prUrl]; removed++; }
+    }
+    if (removed) {
+      await new Promise((res) => chrome.storage.local.set({ [JOBS_KEY]: map }, res));
+      refreshBadge(map);
+    }
+    return removed;
+  });
+  return writeChain;
+}
+
 // Keep the registry bounded: drop the oldest *terminal* jobs past the cap.
 // Active jobs are never pruned.
 function prune(map) {

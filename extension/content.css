@@ -301,6 +301,14 @@
   border-radius: 6px; padding: 3px 8px; font: inherit; font-size: 11px; cursor: pointer;
 }
 .vp-ready-recheck:hover { background: rgba(255, 255, 255, 0.06); }
+/* primary recovery action — copies the start command; the panel then auto-heals */
+.vp-ready-start {
+  border: 1px solid var(--vp-accent); background: rgba(76, 141, 255, 0.14);
+  color: var(--vp-text); border-radius: 6px; padding: 3px 9px; font: inherit;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.vp-ready-start:hover:not(:disabled) { background: rgba(76, 141, 255, 0.24); }
+.vp-ready-start:disabled { opacity: 0.75; cursor: default; border-color: var(--vp-ok); }
 /* keep the shared Copy-diagnostic button compact inside the popover */
 .vp-ready-foot .vp-secondary { padding: 3px 8px; font-size: 11px; font-weight: 500; }
 
@@ -554,6 +562,26 @@
 }
 .vp-hubjump { color: var(--vp-faint); font-size: 12px; flex: none; align-self: center; }
 .vp-hubjob:hover .vp-hubjump { color: var(--vp-text); }
+/* per-row ✕ — clears one finished run from the fleet. Quiet until you hover the
+   row, so it never competes with the jump affordance. */
+.vp-hubclear {
+  flex: none; align-self: center; width: 18px; height: 18px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 5px; background: transparent; cursor: pointer;
+  color: var(--vp-faint); font-size: 12px; line-height: 1;
+  opacity: 0; transition: opacity 0.15s var(--vp-ease), color 0.15s var(--vp-ease), background 0.15s var(--vp-ease);
+}
+.vp-hubjob:hover .vp-hubclear, .vp-hubclear:focus-visible { opacity: 1; }
+.vp-hubclear:hover { color: var(--vp-warn); background: var(--vp-subtle); }
+/* section-header "Clear finished" bulk control */
+.vp-hub-sectright { display: flex; align-items: center; gap: 10px; }
+.vp-hub-clearall {
+  font-family: var(--vp-mono); font-size: 10px; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--vp-muted); cursor: pointer;
+  background: transparent; border: none; padding: 2px 4px; border-radius: 5px;
+  transition: color 0.15s var(--vp-ease), background 0.15s var(--vp-ease);
+}
+.vp-hub-clearall:hover { color: var(--vp-text); background: var(--vp-subtle); }
 
 /* this-PR status / result / recovery card */
 .vp-hubcard {

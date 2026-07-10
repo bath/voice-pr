@@ -506,6 +506,7 @@
     clearInterval(anchorTimer);
     clearInterval(attentionTimer);
     clearTimeout(scrollPauseTimer);
+    stopBridgeWatch();
     try { activePort?.disconnect(); } catch {}
     mediaRecorder = null;
     mediaStream = null;
@@ -684,6 +685,7 @@
     if (action === "record") return enterCapture();
     if (action === "jump") return chrome.runtime.sendMessage({ type: "focus-pr", prUrl: pr, tabId: jobTabId(pr) });
     if (action === "dismiss") return chrome.runtime.sendMessage({ type: "dismiss-job", prUrl: pr }, () => renderHubView());
+    if (action === "clear-finished") return chrome.runtime.sendMessage({ type: "clear-finished-jobs" }, () => renderHubView());
     if (action === "retry" || action === "resend") return hubResend();
     if (action === "discard") return hubDiscard();
   }
@@ -739,6 +741,32 @@
   // pop the per-check breakdown (with Recheck + Copy-diagnostic when there's a
   // problem); collapsed and out of the way otherwise.
   const PREFLIGHT_STAGES = ["bridge", "ffmpeg", "whisper", "whisper model", "gh auth", "orchestrator"];
+  const SERVE_CMD = "npm run serve"; // the one command that brings the bridge up
+
+  // Auto-recover watch: while the bridge is unreachable, quietly re-probe it on a
+  // timer so the moment you start it (`npm run serve`) the panel heals itself to
+  // "ready" with no click. Runs only during an open capture; torn down with it.
+  let bridgeWatch = null;
+  function stopBridgeWatch() {
+    if (bridgeWatch) { clearInterval(bridgeWatch); bridgeWatch = null; }
+  }
+  async function probeBridgeReachable() {
+    try {
+      const resp = await new Promise((resolve) => chrome.runtime.sendMessage({ type: "preflight" }, resolve));
+      return !!(resp && resp.ok && resp.json);
+    } catch { return false; }
+  }
+  function startBridgeWatch() {
+    if (bridgeWatch) return; // already watching
+    bridgeWatch = setInterval(async () => {
+      if (!captureOpen) return stopBridgeWatch();
+      if (await probeBridgeReachable()) {
+        stopBridgeWatch();
+        trace("preflight.recovered", {});
+        runPreflight(); // bridge answered — render the full, real preflight
+      }
+    }, 2500);
+  }
 
   function setReadyBadge(state, title) {
     readyBtn.hidden = false;
@@ -756,9 +784,27 @@
       el.textContent = `${r.pending ? "◌" : r.ok ? "✓" : "✗"} ${r.name}${r.detail ? ` — ${r.detail}` : ""}`;
       readyPop.appendChild(el);
     }
-    if (opts.recheck || opts.copyWhy) {
+    if (opts.startBridge || opts.recheck || opts.copyWhy) {
       const foot = document.createElement("div");
       foot.className = "vp-ready-foot";
+      // Primary recovery affordance when the bridge is down. A content script
+      // can't spawn a local process, so this copies the exact start command and
+      // leaves the auto-watch running — the moment the bridge answers, the panel
+      // flips itself to ready with no further click.
+      if (opts.startBridge) {
+        const b = document.createElement("button");
+        b.className = "vp-ready-start";
+        b.textContent = "▶ Start bridge";
+        b.title = `Copy \`${SERVE_CMD}\` and auto-detect the bridge once it's up`;
+        b.addEventListener("click", async () => {
+          let copied = false;
+          try { await navigator.clipboard.writeText(SERVE_CMD); copied = true; } catch {}
+          b.textContent = copied ? "✓ Copied — run it in your terminal" : `▶ Run: ${SERVE_CMD}`;
+          b.disabled = true;
+          startBridgeWatch(); // (already running from the unreachable branch; idempotent)
+        });
+        foot.appendChild(b);
+      }
       if (opts.recheck) {
         const b = document.createElement("button");
         b.className = "vp-ready-recheck";
@@ -783,13 +829,16 @@
     }
     if (!resp || !resp.ok || !resp.json) {
       traceError("preflight.unreachable", resp?.error || "bridge not reachable");
-      setReadyBadge("problem", "Not ready — bridge not reachable. Start it with `npm run serve` (dispatch will fail).");
+      setReadyBadge("problem", "Bridge not reachable — click ‘Start bridge’, then it recovers on its own.");
       renderReadyPop(
-        [{ name: "bridge", ok: false, detail: `not reachable — start it with npm run serve${resp?.error ? ` (${resp.error})` : ""}` }],
-        { recheck: true, copyWhy: "preflight failed — bridge not reachable" }
+        [{ name: "bridge", ok: false, detail: `not reachable — auto-detecting… start it with \`${SERVE_CMD}\`` }],
+        { startBridge: true, recheck: true, copyWhy: "preflight failed — bridge not reachable" }
       );
+      startBridgeWatch(); // heal automatically the instant the bridge comes up
       return;
     }
+    // Bridge answered — any prior auto-recover watch has done its job.
+    stopBridgeWatch();
     const { ok, checks } = resp.json;
     const rows = PREFLIGHT_STAGES.map((name) => {
       const c = checks.find((x) => x.name === name);
