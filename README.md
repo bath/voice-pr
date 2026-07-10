@@ -160,6 +160,30 @@ changed** tab, record, and talk. Progress streams live in the PR-page panel, but
 the whole point is you can close the tab — it runs asynchronously and the PR
 updates in a few minutes.
 
+### Always-on: run the bridge as a daemon (macOS)
+
+Running `node server.js` (or `npm run serve`) in a terminal means the bridge is
+only up while that terminal is — after a reboot or a closed shell the extension
+hits **"bridge not reachable"**. Install it as a **launchd LaunchAgent** so it
+starts at login and stays up:
+
+```bash
+npm run daemon:install     # writes ~/Library/LaunchAgents/com.voice-pr.bridge.plist, loads it, verifies :4100
+npm run daemon:status      # launchd state + a live preflight probe
+npm run daemon:restart      # after editing server.js/lib/* — picks up the new code
+npm run daemon:logs        # tail the daemon's stdout/stderr (~/.voice-pr/daemon.*.log)
+npm run daemon:uninstall   # stop + remove it (back to manual `npm run serve`)
+```
+
+It runs the crash-restart supervisor (`scripts/serve.js`) from **this checkout**,
+so `daemon:restart` after a code edit is the dev loop. The installer bakes an
+explicit `PATH` into the plist that resolves `node`/`gh`/`docker`/`ffmpeg`/
+`whisper-cli` — launchd otherwise starts jobs with a bare `PATH` and the bridge's
+child processes silently fail. The extension's in-page **auto-recover** (it
+re-probes every 2.5s and heals to *ready* on its own) stays the safety net for
+the gaps: daemon not installed yet, a `daemon:restart`, or launchd's crash-loop
+give-up. Linux (`systemd --user`) isn't wired yet — run `npm run serve` there.
+
 ### Try it against a throwaway PR
 
 ```bash

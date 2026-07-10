@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  voice-pr bridge LaunchAgent (rendered by scripts/daemon.sh — do not hand-edit
+  the installed copy in ~/Library/LaunchAgents; re-run `npm run daemon:install`).
+
+  Placeholders are substituted at install time so the agent runs against THIS
+  checkout with a PATH that resolves node/gh/docker/ffmpeg/whisper-cli — launchd
+  otherwise starts jobs with a bare PATH and the bridge's child processes vanish.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__LABEL__</string>
+
+  <!-- Run the crash-restart supervisor (scripts/serve.js), not server.js raw, so
+       we keep its per-crash backoff underneath launchd's coarser keep-alive. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE__</string>
+    <string>__SERVE__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__WORKDIR__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+
+  <!-- Start at login and keep it up; launchd throttles restarts to >=10s so a
+       hard crash-loop (or a port already held by a manual `npm run serve`) can't
+       hot-spin. Stop it deliberately with `npm run daemon:uninstall`. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__OUT__</string>
+  <key>StandardErrorPath</key>
+  <string>__ERR__</string>
+</dict>
+</plist>
