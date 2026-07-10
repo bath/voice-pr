@@ -4,7 +4,7 @@
 // vocabulary so the popup and the in-page hub can never drift.
 (function () {
   const JOBS_KEY = "voicepr:jobs";
-  const { STATUS_META, prNumberOf, repoOf, fleetCountLabel } = window.VoicePrHub;
+  const { STATUS_META, prNumberOf, repoOf, fleetCountLabel, isTerminal } = window.VoicePrHub;
   const root = document.getElementById("vp-popup-root");
 
   function render(jobs) {
@@ -20,6 +20,16 @@
     count.className = "vp-popup-count";
     count.textContent = arr.length ? fleetCountLabel(arr) : "idle";
     head.append(title, count);
+    // Bulk clear for finished runs — mirrors the in-page hub so the toolbar fleet
+    // doesn't accumulate stale terminal rows either.
+    if (arr.some((j) => isTerminal(j.status))) {
+      const clearAll = document.createElement("button");
+      clearAll.className = "vp-popup-clearall";
+      clearAll.textContent = "Clear finished";
+      clearAll.title = "Clear all finished runs";
+      clearAll.addEventListener("click", () => chrome.runtime.sendMessage({ type: "clear-finished-jobs" }));
+      head.appendChild(clearAll);
+    }
     root.appendChild(head);
 
     if (!arr.length) {
@@ -34,8 +44,10 @@
     list.className = "vp-hub-list";
     for (const job of arr) {
       const meta = STATUS_META[job.status] || { dot: "queue" };
-      const row = document.createElement("button");
+      const row = document.createElement("div");
       row.className = "vp-hubjob";
+      row.setAttribute("role", "button");
+      row.setAttribute("tabindex", "0");
       const dot = document.createElement("span");
       dot.className = `vp-hubdot ${meta.dot}`;
       const repo = repoOf(job);
@@ -61,6 +73,19 @@
       jump.className = "vp-hubjump";
       jump.textContent = "↗";
       row.append(dot, main, jump);
+      // Per-row ✕ to clear one finished run, matching the in-page hub.
+      if (isTerminal(job.status)) {
+        const clear = document.createElement("button");
+        clear.className = "vp-hubclear";
+        clear.textContent = "✕";
+        clear.title = "Clear this finished run";
+        clear.setAttribute("aria-label", `Clear finished run for #${prNumberOf(job)}`);
+        clear.addEventListener("click", (e) => {
+          e.stopPropagation();
+          chrome.runtime.sendMessage({ type: "dismiss-job", prUrl: job.prUrl });
+        });
+        row.appendChild(clear);
+      }
       row.addEventListener("click", () => {
         chrome.runtime.sendMessage({ type: "focus-pr", prUrl: job.prUrl, tabId: job.originTabId }, () => window.close());
       });
