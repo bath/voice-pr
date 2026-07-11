@@ -20,6 +20,7 @@ function harness({
   preparedHead = null,
   warmDelayMs = 0,
   warmHeartbeatMs = 1_000,
+  pipelineVariant = "prewarm",
 } = {}) {
   const prompts = [];
   const sendOptions = [];
@@ -36,7 +37,7 @@ function harness({
     async send(prompt, options) {
       prompts.push(prompt);
       sendOptions.push(options);
-      const warm = prompts.length === 1;
+      const warm = options.mode === "plan";
       return {
         id: warm ? "warm-run" : "execute-run",
         async wait() {
@@ -97,6 +98,7 @@ function harness({
     prepareTtlMs,
     prepareMax,
     warmHeartbeatMs,
+    pipelineVariant,
     createAgent: async (options) => {
       createdWith = options;
       return agent;
@@ -288,6 +290,33 @@ test("execute emits heartbeat progress while the warm turn is still running", as
     events.findIndex((event) => event.stage === "agent-warm-waiting") <
       events.findIndex((event) => event.stage === "agent-ready")
   );
+  await runtime.shutdown();
+});
+
+test("single-turn variant stages an idle agent and performs only one inference turn", async () => {
+  const { runtime, prompts, sendOptions } = harness({
+    pipelineVariant: "single-turn",
+  });
+  const status = runtime.warm({
+    sessionId: "single-turn",
+    pr,
+    context: {},
+  });
+  assert.equal(status.pipelineVariant, "single-turn");
+  await waitFor(() => runtime.status("single-turn")?.state === "ready");
+  assert.equal(prompts.length, 0, "record start must not run inference");
+
+  const result = await runtime.execute({
+    sessionId: "single-turn",
+    pr,
+    context: {},
+    segments,
+  });
+  assert.equal(prompts.length, 1);
+  assert.equal(sendOptions[0].mode, "agent");
+  assert.match(prompts[0], /only inference turn/i);
+  assert.equal(result.metrics.pipelineVariant, "single-turn");
+  assert.equal(result.metrics.inferenceTurnsBeforeStop, 0);
   await runtime.shutdown();
 });
 

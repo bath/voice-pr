@@ -2,10 +2,10 @@
 
 Speak while reviewing your GitHub PR. As soon as the page loads, the extension
 deterministically resolves the PR context, refreshes a repository mirror, and
-prepares a reusable PR-head worktree. Explicit Record then starts a local Cursor
-agent immediately from that prepared state. When recording stops, local Whisper
-transcribes the audio and the already-warm agent interprets the fuzzy requests,
-edits, validates, and commits; the bridge pushes to the PR branch.
+prepares a reusable PR-head worktree. Explicit Record then stages a local Cursor
+agent without inference. When recording stops, local Whisper transcribes the
+audio and one focused agent turn interprets the fuzzy requests, edits, validates,
+and commits; the bridge pushes to the PR branch.
 
 ## Pipeline
 
@@ -18,25 +18,21 @@ Chrome extension
 
   record starts ──► POST /api/warm
                     lease the prepared worktree
-                    Cursor SDK agent analyzes PR/diff/files
+                    create an idle Cursor SDK agent; no inference
 
   record stops  ──► POST /api/dispatch
                     local Whisper transcription
                     timestamp → file:line anchoring
-                    same agent interprets + edits + tests
+                    one focused agent turn interprets + edits + tests
                     commit + push to PR head
                     bridge posts intent-trail comment
 ```
 
 There is no orchestrator, work-item queue, mayor, polecat, refinery, or direct
-LLM call. The harness is two turns on one durable Cursor SDK agent:
-
-1. **Warm turn:** analyze everything expensive without editing.
-2. **Execution turn:** translate anchored speech into actionable changes,
-   confidence-gate it, and execute.
-
-Interpretation and execution share one turn after transcription. This preserves
-the coding-agent harness without paying for another model round trip.
+LLM call. The default treatment uses one inference turn on a Cursor SDK agent:
+page load prepares deterministic context, record start pays only agent setup,
+and record stop sends the anchored speech for focused interpretation and
+execution. Set `VOICE_PR_PIPELINE_VARIANT=prewarm` to run the two-turn control.
 
 ## Success metric
 
@@ -48,7 +44,9 @@ stop-to-patch = patchReadyAt - recordingStoppedAt
 
 Each result includes:
 
-- `recordToAgentWarmingMs` — record click to the first inference turn
+- `pipelineVariant` and `inferenceTurnsBeforeStop`
+- `recordToAgentReadyMs` — record click to staged SDK agent
+- `recordToAgentWarmingMs` — record click to control pre-warm start; null for treatment
 - `preparationHit` and `preparationAgeMs`
 - `warmMs`
 - `warmWaitMs` — warm work still on the critical path after recording stopped
@@ -59,6 +57,32 @@ Page-load traces also include `pageLoadToPreparedMs`. Compare median and p95
 `stopToPatchMs` and `recordToAgentWarmingMs` against cold-path recordings. Patch
 acceptance, stale-head refreshes, expired unused preparations, and disk usage are
 guardrails.
+
+## A/B experiment
+
+This branch defaults to the `single-turn` treatment. Run the control with:
+
+```bash
+VOICE_PR_PIPELINE_VARIANT=prewarm npm start
+```
+
+Run the treatment with:
+
+```bash
+VOICE_PR_PIPELINE_VARIANT=single-turn npm start
+```
+
+Use comparable short recordings against the same PR and request class. After at
+least 10 runs per variant:
+
+```bash
+npm run ab:report
+```
+
+The JSON report groups starts, completions, failures, commit acceptance,
+stale-head refreshes, median stop-to-patch, and p95 stop-to-patch by variant.
+The experiment wins only if latency falls without a commit-acceptance regression
+or stale-head safety failure.
 
 After Dispatch, the capture-panel clock switches from recording duration to a
 live `commit 0:00` timer. It stops when the harness has pushed the commit to the
@@ -113,8 +137,8 @@ npm run daemon:logs
 
 - `POST /api/prepare` — performs deterministic context, mirror, and PR-head
   worktree preparation on passive page load; never starts inference.
-- `POST /api/warm` — atomically leases prepared state and starts agent analysis
-  at explicit record start.
+- `POST /api/warm` — atomically leases prepared state and stages an idle agent
+  by default; the `prewarm` control starts agent analysis.
 - `POST /api/dispatch` — transcribes, anchors, and sends the final instructions
   to that same agent while streaming NDJSON progress.
 - `GET /api/preflight` — checks Whisper, GitHub auth, and Cursor SDK auth.
@@ -150,7 +174,8 @@ amends.
 | `PORT` | `4100` | Local bridge port |
 | `CURSOR_API_KEY` | required | Cursor SDK authentication |
 | `VOICE_PR_MODEL` | `composer-2.5` with `fast=true` | Cursor model ID override; setting it disables the default Fast parameter |
-| `VOICE_PR_AGENT_TTL_MS` | `1800000` | Abandoned warm-agent lifetime |
+| `VOICE_PR_PIPELINE_VARIANT` | `single-turn` | `single-turn` treatment or `prewarm` control |
+| `VOICE_PR_AGENT_TTL_MS` | `1800000` | Abandoned agent lifetime |
 | `VOICE_PR_PREPARE_TTL_MS` | `600000` | Unused page-load preparation lifetime |
 | `VOICE_PR_PREPARE_MAX` | `6` | Maximum concurrent prepared/leased PR heads |
 | `VOICE_PR_CONTEXT_TTL_MS` | `120000` | PR/Jira/CI context cache lifetime |

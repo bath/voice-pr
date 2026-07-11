@@ -96,6 +96,7 @@ async function handleDispatch(req, res) {
     await tracer.markLatest({ prRef, kind: "dispatch" });
     tracer.event("bridge.dispatch.start", {
       prRef,
+      pipelineVariant: agentRuntime.pipelineVariant,
       hasAudio: !!audioB64,
       ext,
       timeline: timeline.length,
@@ -156,6 +157,7 @@ async function handleDispatch(req, res) {
         agentId: result?.agentId,
         status: result?.status,
         stopToPatchMs: result?.metrics?.stopToPatchMs,
+        pipelineVariant: result?.metrics?.pipelineVariant,
       });
     } catch (e) {
       err = e.message;
@@ -198,6 +200,7 @@ async function handleWarm(req, res) {
       tracer.event("bridge.warm.accepted", {
         pr: context.pr.number,
         state: context.warm.state,
+        pipelineVariant: context.warm.pipelineVariant,
       });
       res.writeHead(202, { "content-type": "application/json" });
       res.end(JSON.stringify(context));

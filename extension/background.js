@@ -254,8 +254,8 @@ function patchForEvent(ev) {
     case "transcribed": return { status: "running", label: `Heard ${d.count ?? 0} comment${d.count === 1 ? "" : "s"}` };
     case "pr-loaded": return { status: "running", label: "Loaded PR", branch: d.branch ?? null };
     case "context": return { status: "running", label: "Context ready" };
-    case "agent-starting": return { status: "running", label: "Connecting to warm agent…" };
-    case "agent-warm-waiting": return { status: "running", label: `Waiting for agent pre-warm · ${Math.max(0, Math.floor((d.elapsedMs || 0) / 1000))}s` };
+    case "agent-starting": return { status: "running", label: "Connecting prepared agent…" };
+    case "agent-warm-waiting": return { status: "running", label: `${d.pipelineVariant === "single-turn" ? "Waiting for agent setup" : "Waiting for agent pre-warm"} · ${Math.max(0, Math.floor((d.elapsedMs || 0) / 1000))}s` };
     case "agent-ready": return { status: "running", label: d.warmWaitMs ? `Agent ready · waited ${(d.warmWaitMs / 1000).toFixed(1)}s` : "Agent ready" };
     case "interpreting": return { status: "running", label: "Interpreting requests…" };
     case "agent-running": return { status: "running", label: "Agent editing and validating…", agentId: d.agentId ?? null, runId: d.runId ?? null };

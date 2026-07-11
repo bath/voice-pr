@@ -66,6 +66,19 @@ test("single hot turn interprets fuzzy speech, confidence-gates, edits, tests, a
   assert.match(body, /Jira ABC-123; CI 5 checks, 1 failing/);
 });
 
+test("single-turn treatment avoids broad discovery and does not assume warm analysis", () => {
+  const body = buildExecutionPrompt({
+    pr,
+    segments: [{ text: "rename this", file: "a.js", line: 1 }],
+    branchHead: "abc123",
+    prewarmed: false,
+  });
+  assert.match(body, /only inference turn/i);
+  assert.match(body, /Inspect only the anchored targets/);
+  assert.match(body, /do not\s+perform broad PR/i);
+  assert.doesNotMatch(body, /context you already analyzed/);
+});
+
 test("warm turn analyzes PR, GitHub context, Jira, files, and tests without editing", () => {
   const body = buildWarmPrompt({
     pr,

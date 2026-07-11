@@ -1141,12 +1141,20 @@
         if (c.jiraKey) bits.push(chip(`🎫 ${c.jiraKey}`, "tk"));
         if (c.checksSummary)
           bits.push(chip(`✔︎ ${c.checksSummary}`, "ok"));
-        bits.push(chip("agent warming", "ok"));
+        bits.push(
+          chip(
+            c.warm?.pipelineVariant === "single-turn"
+              ? "single-turn agent staged"
+              : "agent warming",
+            "ok"
+          )
+        );
         ctxEl.innerHTML = bits.join("");
         trace("warm.accepted", {
           state: c.warm?.state,
           branch: c.pr.branch,
           contextCacheHit: c.contextCacheHit,
+          pipelineVariant: c.warm?.pipelineVariant,
         });
       }
     );
@@ -1501,7 +1509,7 @@
   const PIPELINE = [
     { id: "transcribe", idle: "Transcribe audio", doing: "Transcribing audio…" },
     { id: "comments", idle: "Detect comments", doing: "Listening for comments…" },
-    { id: "context", idle: "Finish agent pre-warm", doing: "Waiting for agent pre-warm…" },
+    { id: "context", idle: "Connect prepared agent", doing: "Connecting prepared agent…" },
     { id: "interpret", idle: "Interpret requests", doing: "Interpreting requests…" },
     { id: "work", idle: "Edit, validate & push", doing: "Agent editing and validating…" },
     { id: "trail", idle: "Post intent trail", doing: "Posting intent trail…" },
@@ -1587,7 +1595,11 @@
       case "agent-warm-waiting":
         pipe.note(
           "context",
-          `Waiting for agent pre-warm · ${Math.max(
+          `${
+            d.pipelineVariant === "single-turn"
+              ? "Waiting for agent setup"
+              : "Waiting for agent pre-warm"
+          } · ${Math.max(
             0,
             Math.floor((d.elapsedMs || 0) / 1000)
           )}s`
