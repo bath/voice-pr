@@ -1464,6 +1464,9 @@
         pipe.complete("interpret");
         pipe.activate("work");
         break;
+      case "agent-pushing":
+        pipe.note("work", `Pushing to ${d.branch || "PR branch"}…`);
+        break;
       case "agent-finished":
         pipe.complete("work", d.commits ? `Pushed ${plural(d.commits, "commit")}` : "Review complete");
         if (d.commits) pipe.activate("trail");

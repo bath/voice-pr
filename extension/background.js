@@ -223,6 +223,7 @@ function patchForEvent(ev) {
     case "agent-ready": return { status: "running", label: d.warmWaitMs ? `Agent ready · waited ${(d.warmWaitMs / 1000).toFixed(1)}s` : "Agent ready" };
     case "interpreting": return { status: "running", label: "Interpreting requests…" };
     case "agent-running": return { status: "running", label: "Agent editing and validating…", agentId: d.agentId ?? null, runId: d.runId ?? null };
+    case "agent-pushing": return { status: "running", label: `Pushing to ${d.branch || "PR branch"}…` };
     case "agent-finished": return { status: "running", label: d.commits ? `Pushed ${d.commits} commit${d.commits === 1 ? "" : "s"}` : "Review complete" };
     case "commenting": return { status: "running", label: "Posting intent trail…" };
     case "branch-queued": return { status: "queued", label: `Queued${d.position ? ` · position ${d.position}` : ""}…` };

@@ -11,13 +11,14 @@ const pr = {
 };
 const segments = [{ text: "this needs backoff", file: "lib/net.js", line: 12 }];
 
-function harness({ executionStatus = "finished" } = {}) {
+function harness({ executionStatus = "finished", model = "test-model" } = {}) {
   const prompts = [];
   const sendOptions = [];
   const commands = [];
   let disposed = 0;
   let createdWith = null;
   let headReads = 0;
+  let pushed = false;
   const base = "a".repeat(40);
   const changed = "b".repeat(40);
   const agent = {
@@ -65,13 +66,21 @@ function harness({ executionStatus = "finished" } = {}) {
         stdout: `${changed}\tadd retry backoff\n`,
         stderr: "",
       };
+    if (args.includes("push")) {
+      pushed = true;
+      return { code: 0, stdout: "", stderr: "" };
+    }
     if (joined.startsWith("ls-remote"))
-      return { code: 0, stdout: `${changed}\trefs/heads/feat\n`, stderr: "" };
+      return {
+        code: 0,
+        stdout: `${pushed ? changed : base}\trefs/heads/feat\n`,
+        stderr: "",
+      };
     return { code: 0, stdout: "", stderr: "" };
   };
   const runtime = createAgentRuntime({
     apiKey: "test-key",
-    model: "test-model",
+    ...(model ? { model } : {}),
     ttlMs: 60_000,
     createAgent: async (options) => {
       createdWith = options;
@@ -125,6 +134,14 @@ test("execute reuses the warm agent for interpretation, edits, validation, commi
   assert.equal(result.agentId, "agent-1");
   assert.equal(result.commits.length, 1);
   assert.equal(result.commits[0].oid, "b".repeat(40));
+  assert.ok(
+    commands.some((call) =>
+      call.args
+        .join(" ")
+        .includes("-c remote.origin.mirror=false push origin HEAD:refs/heads/feat")
+    ),
+    "the harness, not the sandboxed agent, must push the committed change"
+  );
   assert.ok(commands.some((call) => call.args[0] === "ls-remote"));
   assert.ok(events.some((event) => event.stage === "agent-ready"));
   assert.ok(events.some((event) => event.stage === "agent-finished"));
@@ -154,6 +171,24 @@ test("preflight checks SDK authentication and model discovery", async () => {
   const result = await runtime.check();
   assert.equal(result.ok, true);
   assert.match(result.detail, /model test-model/);
+});
+
+test("defaults to Composer 2.5 Fast when no model override is configured", async () => {
+  const previous = process.env.VOICE_PR_MODEL;
+  delete process.env.VOICE_PR_MODEL;
+  const { runtime, createdWith } = harness({ model: null });
+  try {
+    runtime.warm({ sessionId: "s5", pr, context: {} });
+    await waitFor(() => runtime.status("s5")?.state === "ready");
+    assert.deepEqual(createdWith().model, {
+      id: "composer-2.5",
+      params: [{ id: "fast", value: "true" }],
+    });
+  } finally {
+    if (previous == null) delete process.env.VOICE_PR_MODEL;
+    else process.env.VOICE_PR_MODEL = previous;
+    await runtime.shutdown();
+  }
 });
 
 async function waitFor(predicate) {

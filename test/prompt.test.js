@@ -46,14 +46,15 @@ test("renders ranges, tokens, snippets, and missing anchors", () => {
   assert.match(body, /no on-screen location — infer from the words/);
 });
 
-test("delivery contract targets the PR branch without destructive git", () => {
+test("delivery contract leaves the authenticated push to the harness", () => {
   const body = execution([{ text: "x", file: "a.js", line: 1 }]);
   assert.match(body, /Work from `abc123`/);
-  assert.match(body, /git push origin HEAD:refs\/heads\/feat\/retry/);
+  assert.match(body, /harness owns the authenticated push to `feat\/retry`/);
+  assert.doesNotMatch(body, /git push origin/);
   assert.match(body, /Never force-push, rebase, amend/);
 });
 
-test("single hot turn interprets fuzzy speech, confidence-gates, edits, tests, and pushes", () => {
+test("single hot turn interprets fuzzy speech, confidence-gates, edits, tests, and commits", () => {
   const body = execution(
     [{ text: "make this less weird", file: "a.js", line: 1 }],
     { jiraKey: "ABC-123", checksSummary: "5 checks, 1 failing" }

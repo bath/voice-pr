@@ -132,7 +132,7 @@ amends.
 |---|---|---|
 | `PORT` | `4100` | Local bridge port |
 | `CURSOR_API_KEY` | required | Cursor SDK authentication |
-| `VOICE_PR_MODEL` | `auto` | Cursor model ID |
+| `VOICE_PR_MODEL` | `composer-2.5` with `fast=true` | Cursor model ID override; setting it disables the default Fast parameter |
 | `VOICE_PR_AGENT_TTL_MS` | `1800000` | Abandoned warm-agent lifetime |
 | `VOICE_PR_WORKSPACE_DIR` | `~/.voice-pr/workspaces` | Session worktrees |
 | `VOICE_PR_REPO_CACHE_DIR` | `~/.voice-pr/repo-cache` | Bare repository mirrors |
