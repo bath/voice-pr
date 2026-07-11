@@ -24,6 +24,19 @@ const JOBS_KEY = "voicepr:jobs";
 const JOBS_CAP = 40; // distinct PRs kept in the registry; oldest terminal ones drop
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // Record-start pre-warm. The bridge returns PR context as soon as it has
+  // launched the workspace + agent analysis in the background.
+  if (msg?.type === "warm") {
+    fetch(`${BRIDGE}/api/warm`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prRef: msg.prUrl, sessionId: msg.sessionId }),
+    })
+      .then((r) => r.json())
+      .then((json) => sendResponse({ ok: !json.error, json }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
   // record-start context enrichment
   if (msg?.type === "context") {
     fetch(`${BRIDGE}/api/context?pr=${encodeURIComponent(msg.prUrl)}`)
@@ -193,8 +206,9 @@ function patchForEvent(ev) {
       status: ok ? "done" : d.status === "failed" ? "failed" : "error",
       label: d.summary || (ok ? "Done" : "Incomplete"),
       summary: d.summary || "",
-      workItemId: d.workItemId ?? null,
-      refinery: d.refinery?.status ?? null,
+      agentId: d.agentId ?? null,
+      runId: d.runId ?? null,
+      metrics: d.metrics ?? null,
       trailCommentUrl: d.trailCommentUrl ?? null,
     };
   }
@@ -204,16 +218,14 @@ function patchForEvent(ev) {
     case "transcribing": return { status: "running", label: "Transcribing audio…" };
     case "transcribed": return { status: "running", label: `Heard ${d.count ?? 0} comment${d.count === 1 ? "" : "s"}` };
     case "pr-loaded": return { status: "running", label: "Loaded PR", branch: d.branch ?? null };
-    case "context": return { status: "running", label: "Gathering context…" };
-    case "project-ready": return { status: "running", label: "Registering repo…" };
-    case "work-filed": return { status: "running", label: d.id ? `Filed ${d.id}` : "Filed work item", workItemId: d.id ?? null };
-    case "dispatching": return { status: "running", label: "In the orchestrator's hands" };
-    case "work-status": return { status: "running", label: `Orchestrator working${d.status ? ` · ${d.status}` : ""}` };
-    case "refinery": return { status: "running", label: `Refinery${d.status ? ` · ${d.status}` : ""}` };
-    case "commits-landed": return { status: "running", label: d.count ? `Merged ${d.count} commit${d.count === 1 ? "" : "s"}` : "Merged" };
+    case "context": return { status: "running", label: "Context ready" };
+    case "agent-starting": return { status: "running", label: "Connecting to warm agent…" };
+    case "agent-ready": return { status: "running", label: d.warmWaitMs ? `Agent ready · waited ${(d.warmWaitMs / 1000).toFixed(1)}s` : "Agent ready" };
+    case "interpreting": return { status: "running", label: "Interpreting requests…" };
+    case "agent-running": return { status: "running", label: "Agent editing and validating…", agentId: d.agentId ?? null, runId: d.runId ?? null };
+    case "agent-finished": return { status: "running", label: d.commits ? `Pushed ${d.commits} commit${d.commits === 1 ? "" : "s"}` : "Review complete" };
     case "commenting": return { status: "running", label: "Posting intent trail…" };
     case "branch-queued": return { status: "queued", label: `Queued${d.position ? ` · position ${d.position}` : ""}…` };
-    case "branch-dispatch-start": return { status: "running", label: "Registering repo…" };
     default: return null;
   }
 }
@@ -237,8 +249,9 @@ chrome.runtime.onConnect.addListener((port) => {
       originTabId,
       startedAt: Date.now(),
       summary: "",
-      workItemId: null,
-      refinery: null,
+      agentId: null,
+      runId: null,
+      metrics: null,
       trailCommentUrl: null,
       error: null,
     });
@@ -267,7 +280,7 @@ chrome.runtime.onConnect.addListener((port) => {
           if (patch) updateJob(prUrl, patch);
           if (ev.stage === "result" || ev.stage === "done") {
             sawResult = true;
-            // the orchestrator has it now — clear the tab's crash-safe pending
+            // the agent completed — clear the tab's crash-safe pending
             // copy centrally, so a reopened origin tab doesn't offer to resend.
             try { chrome.storage.local.remove([`voicepr:pending:${prUrl}`, `voicepr:handedoff:${prUrl}`]); } catch {}
           }

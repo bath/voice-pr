@@ -22,11 +22,13 @@ set -euo pipefail
 LABEL="com.voice-pr.bridge"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVE="$REPO/scripts/serve.js"
+RUNNER="$REPO/scripts/run-daemon.sh"
 TEMPLATE="$REPO/scripts/com.voice-pr.bridge.plist.template"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOGDIR="$HOME/.voice-pr"
 OUT="$LOGDIR/daemon.out.log"
 ERR="$LOGDIR/daemon.err.log"
+KEYFILE="$LOGDIR/cursor-api-key"
 DOMAIN="gui/$(id -u)"
 PORT="${PORT:-4100}"
 
@@ -36,13 +38,13 @@ info(){ printf '  %s\n' "$1"; }
 
 # Build a PATH that resolves every binary the bridge shells out to. launchd hands
 # jobs a bare PATH (/usr/bin:/bin:/usr/sbin:/sbin), so node (often under nvm),
-# gh/ffmpeg/whisper-cli (homebrew) and docker would silently fail to spawn. We
+# gh/ffmpeg/whisper-cli (homebrew) would silently fail to spawn. We
 # resolve each tool's dir on THIS machine and prepend it, then add the usual
 # locations as a backstop. Missing tools are warned about, not fatal — the
 # extension preflight surfaces them anyway.
 build_path() {
   local dirs=() tool p
-  for tool in node gh docker ffmpeg whisper-cli git; do
+  for tool in node gh ffmpeg whisper-cli git; do
     if p="$(command -v "$tool" 2>/dev/null)"; then
       dirs+=("$(dirname "$p")")
     else
@@ -59,26 +61,40 @@ build_path() {
 }
 
 resolve_node() {
-  local n; n="$(command -v node 2>/dev/null)" || die "node not found — install Node >=20 and retry"
+  local n; n="$(command -v node 2>/dev/null)" || die "node not found — install Node >=22.13 and retry"
+  "$n" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>22 || (a===22 && b>=13) ? 0 : 1)' \
+    || die "Node $("$n" --version) is too old — Cursor SDK requires >=22.13"
   printf '%s' "$n"
+}
+
+resolve_cursor_key() {
+  mkdir -p "$LOGDIR"
+  if [ -n "${CURSOR_API_KEY:-}" ]; then
+    (umask 077; printf '%s' "$CURSOR_API_KEY" > "$KEYFILE")
+  fi
+  [ -s "$KEYFILE" ] || die "CURSOR_API_KEY is not set — export it before installing the daemon"
+  chmod 600 "$KEYFILE"
 }
 
 render_plist() {
   local node path
   node="$(resolve_node)"
   path="$(build_path)"
+  resolve_cursor_key
   mkdir -p "$HOME/Library/LaunchAgents" "$LOGDIR"
   # sed with a delimiter that can't appear in paths; values have no | or newline.
   sed \
     -e "s|__LABEL__|$LABEL|g" \
     -e "s|__NODE__|$node|g" \
     -e "s|__SERVE__|$SERVE|g" \
+    -e "s|__RUNNER__|$RUNNER|g" \
     -e "s|__WORKDIR__|$REPO|g" \
     -e "s|__PATH__|$path|g" \
     -e "s|__HOME__|$HOME|g" \
     -e "s|__OUT__|$OUT|g" \
     -e "s|__ERR__|$ERR|g" \
     "$TEMPLATE" > "$PLIST"
+  chmod 600 "$PLIST"
 }
 
 is_loaded() { launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; }
@@ -99,6 +115,7 @@ probe() {
 
 cmd_install() {
   [ -f "$SERVE" ] || die "supervisor missing at $SERVE — run from a full checkout"
+  [ -f "$RUNNER" ] || die "credential wrapper missing at $RUNNER"
   [ -f "$TEMPLATE" ] || die "plist template missing at $TEMPLATE"
   render_plist
   ok "wrote $PLIST"

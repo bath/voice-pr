@@ -1,88 +1,78 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSessionBody } from "../lib/prompt.js";
+import { buildExecutionPrompt, buildWarmPrompt } from "../lib/prompt.js";
 
-const pr = { owner: "bath", repo: "voice-pr", number: 42, title: "Add retry", headRefName: "feat/retry" };
+const pr = {
+  owner: "bath",
+  repo: "voice-pr",
+  number: 42,
+  title: "Add retry",
+  headRefName: "feat/retry",
+};
 
-test("renders each anchored comment with its file:line and the spoken text", () => {
-  const body = buildSessionBody({
-    pr,
-    segments: [
-      { text: "this retry needs backoff", file: "lib/net.js", line: 12 },
-      { text: "rename this var", file: "lib/net.js", line: 30 },
-    ],
-    context: {},
-  });
+function execution(segments, context = {}) {
+  return buildExecutionPrompt({ pr, segments, context, branchHead: "abc123" });
+}
+
+test("execution harness renders anchored comments with file:line and speech", () => {
+  const body = execution([
+    { text: "this retry needs backoff", file: "lib/net.js", line: 12 },
+    { text: "rename this var", file: "lib/net.js", line: 30 },
+  ]);
   assert.match(body, /1\. `lib\/net\.js:12` — "this retry needs backoff"/);
   assert.match(body, /2\. `lib\/net\.js:30` — "rename this var"/);
 });
 
-test("renders a line range when endLine differs from line", () => {
-  const body = buildSessionBody({
-    pr,
-    segments: [{ text: "extract this block", file: "a.js", line: 10, endLine: 18 }],
-    context: {},
-  });
+test("renders ranges, tokens, snippets, and missing anchors", () => {
+  const body = execution([
+    { text: "extract this block", file: "a.js", line: 10, endLine: 18 },
+    { text: "rename", file: "a.js", line: 5, endLine: 5 },
+    {
+      text: "simplify",
+      file: "a.js",
+      line: 3,
+      token: "computeThing",
+      snippet: "const x = " + "y".repeat(400),
+    },
+    { text: "add a guard in the parser", file: null, line: null },
+  ]);
   assert.match(body, /`a\.js:10-18`/);
-});
-
-test("collapses a range to a single line when endLine equals line", () => {
-  const body = buildSessionBody({
-    pr,
-    segments: [{ text: "x", file: "a.js", line: 5, endLine: 5 }],
-    context: {},
-  });
   assert.match(body, /`a\.js:5` —/);
   assert.doesNotMatch(body, /5-5/);
-});
-
-test("falls back to an infer-from-words note when a segment has no on-screen file", () => {
-  const body = buildSessionBody({
-    pr,
-    segments: [{ text: "over in the parser, add a guard", file: null, line: null }],
-    context: {},
-  });
+  assert.match(body, /pointing at `computeThing`/);
+  const snippet = body.match(/selected code: `([^`]*)`/);
+  assert.ok(snippet);
+  assert.ok(snippet[1].length <= 200);
   assert.match(body, /no on-screen location — infer from the words/);
 });
 
-test("includes the pointed-at token and truncates a long selected snippet to 200 chars", () => {
-  const snippet = "const x = " + "y".repeat(400);
-  const body = buildSessionBody({
-    pr,
-    segments: [{ text: "simplify", file: "a.js", line: 3, token: "computeThing", snippet }],
-    context: {},
-  });
-  assert.match(body, /pointing at `computeThing`/);
-  const m = body.match(/selected code: `([^`]*)`/);
-  assert.ok(m, "expected a selected-code snippet in the body");
-  assert.ok(m[1].length <= 200, `snippet should be capped at 200 chars, got ${m[1].length}`);
+test("delivery contract targets the PR branch without destructive git", () => {
+  const body = execution([{ text: "x", file: "a.js", line: 1 }]);
+  assert.match(body, /Work from `abc123`/);
+  assert.match(body, /git push origin HEAD:refs\/heads\/feat\/retry/);
+  assert.match(body, /Never force-push, rebase, amend/);
 });
 
-test("carries the PR head branch as the refinery merge target in the instructions", () => {
-  const body = buildSessionBody({ pr, segments: [{ text: "x", file: "a.js", line: 1 }], context: {} });
-  assert.match(body, /worktree is based on the\s+PR head branch `feat\/retry`/);
-  assert.match(body, /target\s+branch `feat\/retry`/);
+test("single hot turn interprets fuzzy speech, confidence-gates, edits, tests, and pushes", () => {
+  const body = execution(
+    [{ text: "make this less weird", file: "a.js", line: 1 }],
+    { jiraKey: "ABC-123", checksSummary: "5 checks, 1 failing" }
+  );
+  assert.match(body, /translate each fuzzy spoken comment into an actionable/);
+  assert.match(body, /HIGH confidence/);
+  assert.match(body, /LOW confidence/);
+  assert.match(body, /one\s+coherent commit/);
+  assert.match(body, /Jira ABC-123; CI 5 checks, 1 failing/);
 });
 
-test("lists optional context (Jira key, CI checks) only when present, never as a blocker", () => {
-  const withCtx = buildSessionBody({
+test("warm turn analyzes PR, GitHub context, Jira, files, and tests without editing", () => {
+  const body = buildWarmPrompt({
     pr,
-    segments: [{ text: "x", file: "a.js", line: 1 }],
     context: { jiraKey: "ABC-123", checksSummary: "5 checks, 1 failing" },
   });
-  assert.match(withCtx, /Jira ticket `ABC-123`/);
-  assert.match(withCtx, /CI \/ checks: 5 checks, 1 failing/);
-  assert.match(withCtx, /DO NOT block on this/);
-
-  const withoutCtx = buildSessionBody({ pr, segments: [{ text: "x", file: "a.js", line: 1 }], context: {} });
-  assert.doesNotMatch(withoutCtx, /Jira ticket/);
-  assert.doesNotMatch(withoutCtx, /CI \/ checks:/);
-});
-
-test("instructs confidence-gating: HIGH edits + one commit each, LOW left for clarification", () => {
-  const body = buildSessionBody({ pr, segments: [{ text: "x", file: "a.js", line: 1 }], context: {} });
-  assert.match(body, /HIGH:/);
-  assert.match(body, /LOW/);
-  assert.match(body, /needing clarification/);
-  assert.match(body, /Do NOT post PR comments yourself/);
+  assert.match(body, /gh pr view 42 --repo bath\/voice-pr --comments/);
+  assert.match(body, /Atlassian tool/);
+  assert.match(body, /files, tests, and conventions/);
+  assert.match(body, /Do not edit files, commit, push/);
+  assert.match(body, /READY/);
 });

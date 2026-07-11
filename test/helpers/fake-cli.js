@@ -20,8 +20,8 @@ const FAKE_SCRIPT = `#!/usr/bin/env bash
 name="$(basename "$0")"
 argstr="$*"
 if [ -n "\${FAKE_CLI_LOG:-}" ]; then
-  # Flatten newlines so one call is always one log line (arg values such as a
-  # work-item --body are multi-line); the joined-arg matching below is unaffected.
+  # Flatten newlines so one call is always one log line (some argument values
+  # are multi-line); the joined-arg matching below is unaffected.
   flat="$(printf '%s' "$argstr" | tr '\\n' ' ')"
   printf '%s\\t%s\\n' "$name" "$flat" >> "$FAKE_CLI_LOG"
 fi

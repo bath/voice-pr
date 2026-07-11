@@ -83,9 +83,9 @@ test("events also fan out to the global rolling log", async () => {
 });
 
 test("areasFor maps code prefixes to source locations, with a fallback", () => {
-  const areas = areasFor(["exec.fail", "orchestrator.workitem"]);
+  const areas = areasFor(["exec.fail", "agent.warm"]);
   assert.ok(areas.some((a) => a.includes("lib/exec.js")));
-  assert.ok(areas.some((a) => a.includes("lib/orchestrator.js")));
+  assert.ok(areas.some((a) => a.includes("lib/agent.js")));
   // an unmatched code still yields a non-empty hint
   assert.equal(areasFor(["totally-unknown-code"]).length, 1);
   assert.ok(Object.keys(CODE_MAP).length > 0);

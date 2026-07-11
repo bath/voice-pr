@@ -23,7 +23,7 @@ test("no saved bundle → recovery UI stays hidden", async () => {
   const { decideRecovery } = await loadRecovery();
   assert.deepEqual(plain(decideRecovery(null, null)), { show: false, mode: "none" });
   // A stray hand-off marker with no bundle must not conjure a banner.
-  assert.deepEqual(plain(decideRecovery(null, { handedOff: true, workItemId: "W-1" })), {
+  assert.deepEqual(plain(decideRecovery(null, { handedOff: true, agentId: "agent-1" })), {
     show: false,
     mode: "none",
   });
@@ -38,21 +38,21 @@ test("bundle saved but never handed off → genuine crash-recovery (resend)", as
 test("bundle + hand-off marker → awaiting result, NOT the false 'un-dispatched' banner (#46)", async () => {
   const { decideRecovery } = await loadRecovery();
   const bundle = { prRef: "pr", audioB64: "x", savedAt: 1 };
-  const handoff = { handedOff: true, workItemId: "W-42", at: 2 };
+  const handoff = { handedOff: true, agentId: "agent-42", at: 2 };
   assert.deepEqual(plain(decideRecovery(bundle, handoff)), {
     show: true,
     mode: "awaiting-result",
-    workItemId: "W-42",
+    agentId: "agent-42",
   });
 });
 
-test("handed off without a captured work-item id still resumes as awaiting-result", async () => {
+test("handed off without a captured agent id still resumes as awaiting-result", async () => {
   const { decideRecovery } = await loadRecovery();
   const bundle = { prRef: "pr", savedAt: 1 };
   assert.deepEqual(plain(decideRecovery(bundle, { handedOff: true })), {
     show: true,
     mode: "awaiting-result",
-    workItemId: null,
+    agentId: null,
   });
 });
 

@@ -2,7 +2,7 @@
   "name": "voice-pr",
   "version": "0.1.0",
   "private": true,
-  "description": "Speak feedback at your own GitHub PR; an agent transcribes it, makes the confident changes in an isolated worktree, pushes commits, and posts anchored intent-trail comments. Ready to review in a few minutes.",
+  "description": "Speak feedback at your GitHub PR while a Cursor agent pre-warms, then turn the anchored recording into tested commits with minimal post-recording latency.",
   "type": "module",
   "bin": {
     "voice-pr": "./server.js"
@@ -18,10 +18,12 @@
     "demo": "bash scripts/setup-demo-pr.sh",
     "trace": "node scripts/trace.js",
     "test": "node --test && node scripts/validate-extension-gaze.js",
-    "check": "bash -n scripts/daemon.sh && node --check server.js && node --check scripts/serve.js && node --check scripts/trace.js && node --check extension/anchors.js && node --check extension/recovery.js && node --check extension/hub.js && node --check extension/content.js && node --check extension/background.js && node --check extension/gaze.js && node --check lib/archive.js && node --check lib/exec.js && node --check lib/github.js && node --check lib/orchestrator.js && node --check lib/prompt.js && node --check lib/pipeline.js && node --check lib/transcribe.js && node --check lib/trace.js && npm test"
+    "check": "bash -n scripts/daemon.sh scripts/run-daemon.sh && node --check server.js && node --check scripts/serve.js && node --check scripts/trace.js && node --check extension/anchors.js && node --check extension/recovery.js && node --check extension/hub.js && node --check extension/content.js && node --check extension/background.js && node --check extension/gaze.js && node --check lib/agent.js && node --check lib/archive.js && node --check lib/exec.js && node --check lib/github.js && node --check lib/prompt.js && node --check lib/pipeline.js && node --check lib/transcribe.js && node --check lib/trace.js && npm test"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@cursor/sdk": "^1.0.23"
+  },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   }
 }
