@@ -134,7 +134,7 @@
         "Result surfaced as a card with the intent-trail link and a dismiss — pure observe (Law 3).",
         hubPanel({
           thisPr: { prUrl: PR, prNumber: 7 },
-          decision: { state: "done", job: job(7, "done", "Fixed retry backoff", { summary: "Fixed retry backoff; renamed fooSvc → paymentClient", workItemId: "W-4821", refinery: "passed", trailCommentUrl: "https://github.com/acme/checkout/pull/7#discussion" }) },
+          decision: { state: "done", job: job(7, "done", "Fixed retry backoff", { summary: "Fixed retry backoff; renamed fooSvc → paymentClient", agentId: "agent-4821", metrics: { stopToPatchMs: 12400 }, trailCommentUrl: "https://github.com/acme/checkout/pull/7#discussion" }) },
           fleet: [job(7, "done", "Fixed retry backoff")],
         }));
 

@@ -7,21 +7,21 @@
 // survives the tab disconnecting, so a hard reload (e.g. GitHub's full reload
 // when you return to "Files changed") can race the terminal result event — the
 // bundle key is still there only because the client never received the "done"
-// event, not because the work was never sent. Once the orchestrator accepts the
+// event, not because the work was never sent. Once the coding agent accepts the
 // hand-off we persist a marker; recovery consults it so a handed-off bundle
 // resumes as "awaiting result" instead of falsely offering a resend (which
-// would re-file a duplicate work item).
+// would start duplicate work).
 (function (global) {
   // pending: the saved bundle record (or null). handoff: the persisted
-  // hand-off marker (or null) — present once the orchestrator accepted the work.
-  // Returns { show, mode, workItemId? }:
+  // hand-off marker (or null) — present once the coding agent accepted the work.
+  // Returns { show, mode, agentId? }:
   //   { show:false, mode:"none" }            no saved bundle — nothing to do
   //   { show:true,  mode:"awaiting-result" } handed off; work runs server-side
   //   { show:true,  mode:"undispatched" }    genuine crash: saved, never sent
   function decideRecovery(pending, handoff) {
     if (!pending) return { show: false, mode: "none" };
     if (handoff && handoff.handedOff) {
-      return { show: true, mode: "awaiting-result", workItemId: handoff.workItemId || null };
+      return { show: true, mode: "awaiting-result", agentId: handoff.agentId || null };
     }
     return { show: true, mode: "undispatched" };
   }

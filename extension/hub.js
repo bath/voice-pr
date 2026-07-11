@@ -1,6 +1,6 @@
 // voice-pr hub — the "one door, two rooms" surface, factored out of content.js
 // so it can be unit-tested (test/hub.test.js) and screenshotted (scripts/
-// hub-gallery.html) without a browser, chrome APIs, or a live orchestrator.
+// hub-gallery.html) without a browser, chrome APIs, or a live coding agent.
 // Same load pattern as anchors.js / recovery.js: a pure module hung off the
 // global as `VoicePrHub`.
 //
@@ -87,7 +87,7 @@
   // never sent. Only when there is no job at all does the pending bundle decide
   // between "handed off, awaiting result" and a genuine "never dispatched" crash.
   //
-  // Returns { state, job?, pending?, workItemId? } where state is one of:
+  // Returns { state, job?, pending?, agentId? } where state is one of:
   //   idle | running | done | failed | awaiting | draft-unsent
   function classifyPrState({ job, pending, handoff } = {}) {
     const status = job && job.status;
@@ -97,7 +97,7 @@
     // No live/terminal job in the registry for this PR.
     if (pending) {
       if (handoff && handoff.handedOff)
-        return { state: "awaiting", pending, workItemId: handoff.workItemId || null };
+        return { state: "awaiting", pending, agentId: handoff.agentId || null };
       return { state: "draft-unsent", pending };
     }
     return { state: "idle" };
@@ -165,11 +165,18 @@
   // The result / error / recovery card shown for THIS PR above the fleet. Pure
   // presentation + data-actions; the caller wires the buttons.
   function thisPrCard(el, decision, prNumber, now) {
-    const { state, job, pending, workItemId } = decision;
+    const { state, job, pending, agentId } = decision;
     if (state === "done") {
       const card = el("div", { class: "vp-hubcard ok" }, [
         el("div", { class: "vp-hubcard-head", text: `✅ ${job.summary || job.label || "Done"}` }),
-        el("div", { class: "vp-hubcard-sub", text: `work item ${job.workItemId || "—"}${job.refinery ? ` · refinery ${job.refinery}` : ""}` }),
+        el("div", {
+          class: "vp-hubcard-sub",
+          text:
+            `agent ${job.agentId || "—"}` +
+            (Number.isFinite(job.metrics?.stopToPatchMs)
+              ? ` · stop → patch ${(job.metrics.stopToPatchMs / 1000).toFixed(1)}s`
+              : ""),
+        }),
       ]);
       if (job.trailCommentUrl)
         card.appendChild(
@@ -202,17 +209,17 @@
           text: `The last dispatch didn't complete${kb ? ` (~${kb}KB audio)` : ""} — nothing lost. Resend it, or discard.`,
         }),
         el("div", { class: "vp-hubcard-actions" }, [
-          el("button", { class: "vp-hubbtn", "data-vp-action": "resend", text: "↻ Resend to orchestrator" }),
+          el("button", { class: "vp-hubbtn", "data-vp-action": "resend", text: "↻ Resend to agent" }),
           el("button", { class: "vp-hubbtn ghost", "data-vp-action": "discard", text: "Discard" }),
         ]),
       ]);
     }
     if (state === "awaiting") {
       return el("div", { class: "vp-hubcard" }, [
-        el("div", { class: "vp-hubcard-head", text: "↻ Handed to the orchestrator" }),
+        el("div", { class: "vp-hubcard-head", text: "↻ Handed to the coding agent" }),
         el("div", {
           class: "vp-hubcard-sub",
-          text: `This recording${workItemId ? ` (work item ${workItemId})` : ""} runs server-side — the reload just lost the live view, not the work.`,
+          text: `This recording${agentId ? ` (agent ${agentId})` : ""} runs server-side — the reload just lost the live view, not the work.`,
         }),
         el("div", { class: "vp-hubcard-actions" }, [
           el("button", { class: "vp-hubbtn ghost", "data-vp-action": "discard", text: "Got it" }),

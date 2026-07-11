@@ -1,23 +1,32 @@
 #!/usr/bin/env node
 // voice-pr — local bridge for the Chrome extension. The content script can't
 // fetch localhost directly, so the extension's background worker proxies to
-// these endpoints, which transcribe locally and dispatch to the orchestrator.
+// these endpoints, which pre-warm a Cursor agent and transcribe locally.
 import { createServer } from "node:http";
-import { runSession, getContext } from "./lib/pipeline.js";
+import {
+  runSession,
+  getContext,
+  preparePr,
+  warmSession,
+} from "./lib/pipeline.js";
 import { transcribe, anchorSegments, checkStt } from "./lib/transcribe.js";
-import { checkOrchestrator } from "./lib/orchestrator.js";
+import { agentRuntime } from "./lib/agent.js";
 import { run } from "./lib/exec.js";
 import { saveAudio, saveJson } from "./lib/archive.js";
 import { withTracer } from "./lib/trace.js";
 
 const PORT = Number(process.env.PORT || 4100);
+const HOST = "127.0.0.1";
+const MAX_BODY_BYTES = Number(process.env.VOICE_PR_MAX_BODY_BYTES || 100 * 1024 * 1024);
 
-// The Chrome extension calls these endpoints from the github.com origin, so
-// every response is CORS-open and preflights are answered.
-function cors(res) {
-  res.setHeader("access-control-allow-origin", "*");
+// Only extension-origin browser requests are accepted. CLI requests have no
+// Origin header and remain available for local diagnostics.
+function cors(req, res) {
+  const origin = req.headers.origin;
+  if (origin) res.setHeader("access-control-allow-origin", origin);
   res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
   res.setHeader("access-control-allow-headers", "content-type");
+  res.setHeader("vary", "origin");
   // Chrome Private Network Access: an https page (github.com) fetching this
   // localhost bridge needs the server to opt in, or the preflight is blocked.
   res.setHeader("access-control-allow-private-network", "true");
@@ -25,13 +34,21 @@ function cors(res) {
 
 const server = createServer(async (req, res) => {
   try {
-    cors(res);
+    if (!allowedOrigin(req.headers.origin)) {
+      res.writeHead(403, { "content-type": "text/plain" });
+      return res.end("forbidden origin");
+    }
+    cors(req, res);
     const url = new URL(req.url, "http://localhost");
     if (req.method === "OPTIONS") return res.writeHead(204).end();
     if (req.method === "GET" && url.pathname === "/api/context")
       return await handleContext(url, res);
     if (req.method === "GET" && url.pathname === "/api/preflight")
       return await handlePreflight(res);
+    if (req.method === "POST" && url.pathname === "/api/prepare")
+      return await handlePrepare(req, res);
+    if (req.method === "POST" && url.pathname === "/api/warm")
+      return await handleWarm(req, res);
     if (req.method === "POST" && url.pathname === "/api/transcribe")
       return await handleTranscribe(req, res);
     if (req.method === "POST" && url.pathname === "/api/dispatch")
@@ -43,13 +60,23 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// Combined, fire-and-forget path for the extension: transcribe the recording
-// AND dispatch to the orchestrator, entirely server-side, streaming progress.
+// Combined, fire-and-forget path for the extension: transcribe the recording,
+// then send anchored comments to the agent warmed at record start.
 // Completes even if the client closes the tab.
 async function handleDispatch(req, res) {
+  const dispatchReceivedAt = Date.now();
   const body = await readBody(req);
   const input = JSON.parse(body || "{}");
-  const { prRef, sessionId, audioB64, ext = "webm", timeline = [], audioStartMs = 0, typedSegments = [] } = input;
+  const {
+    prRef,
+    sessionId,
+    audioB64,
+    ext = "webm",
+    timeline = [],
+    audioStartMs = 0,
+    typedSegments = [],
+    recordingStoppedAt = null,
+  } = input;
   const sid = sessionId || `anon-${Date.now()}`;
 
   res.writeHead(200, {
@@ -80,7 +107,7 @@ async function handleDispatch(req, res) {
     const events = [];
     // Single funnel for every progress event streamed to the client. Each stage
     // name is also traced verbatim as its `code`, so grepping the code string
-    // lands on the emit site (in this file, lib/pipeline.js, or orchestrator.js).
+    // lands on the emit site (in this file, lib/pipeline.js, or lib/agent.js).
     const send = (stage, detail) => {
       const t = Math.round((Date.now() - t0) / 1000);
       events.push({ stage, detail, t });
@@ -115,9 +142,21 @@ async function handleDispatch(req, res) {
         segs = [...anchored, ...segs];
       }
       if (!segs.length) throw new Error("nothing captured — no speech and no typed comments");
-      result = await runSession({ prRef, segments: segs }, send);
+      result = await runSession({ sessionId: sid, prRef, segments: segs }, send);
+      result.metrics = {
+        ...(result.metrics || {}),
+        dispatchReceivedAt,
+        stopToPatchMs:
+          Number.isFinite(recordingStoppedAt) && result.metrics?.patchReadyAt
+            ? result.metrics.patchReadyAt - recordingStoppedAt
+            : null,
+      };
       send("result", result);
-      tracer.event("bridge.dispatch.done", { workItemId: result?.workItemId, status: result?.status });
+      tracer.event("bridge.dispatch.done", {
+        agentId: result?.agentId,
+        status: result?.status,
+        stopToPatchMs: result?.metrics?.stopToPatchMs,
+      });
     } catch (e) {
       err = e.message;
       // The error record carries the origin (loc) + a stable code; forward both
@@ -137,6 +176,75 @@ async function handleDispatch(req, res) {
           events,
         }).catch(() => {});
       res.end();
+    }
+  });
+}
+
+// Record-start hot path. PR/context lookup finishes before the response so the
+// extension can paint its chips; workspace setup + agent analysis continue in
+// the background while the user records.
+async function handleWarm(req, res) {
+  const body = await readBody(req);
+  const { prRef, sessionId, recordStartedAt = null } = JSON.parse(body || "{}");
+  const sid = sessionId || `warm-${Date.now()}`;
+  return withTracer(sid, { prRef }, async (tracer) => {
+    try {
+      await tracer.markLatest({ prRef, kind: "warm" });
+      tracer.event("bridge.warm.start", { prRef });
+      const context = await warmSession(
+        { sessionId: sid, prRef, recordStartedAt },
+        (stage, detail) => tracer.event(stage, detail || {})
+      );
+      tracer.event("bridge.warm.accepted", {
+        pr: context.pr.number,
+        state: context.warm.state,
+      });
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify(context));
+    } catch (e) {
+      const rec = tracer.error("bridge.warm.error", e);
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: e.message, code: rec.code, loc: rec.loc }));
+    }
+  });
+}
+
+// Passive PR-page hot path. Every operation here is deterministic: resolve and
+// cache PR context, clone/fetch the mirror, and prepare a reusable worktree. No
+// Cursor agent is created and no inference runs until explicit Record.
+async function handlePrepare(req, res) {
+  const receivedAt = Date.now();
+  const body = await readBody(req);
+  const { prRef, pageLoadedAt = null } = JSON.parse(body || "{}");
+  const sid = `prepare-${Date.now()}`;
+  return withTracer(sid, { prRef }, async (tracer) => {
+    try {
+      tracer.event("bridge.prepare.start", { prRef, pageLoadedAt });
+      const prepared = await preparePr(
+        { prRef },
+        (stage, detail) => tracer.event(stage, detail || {})
+      );
+      prepared.metrics = {
+        ...(prepared.metrics || {}),
+        prepareReceivedAt: receivedAt,
+        pageLoadToPreparedMs:
+          Number.isFinite(pageLoadedAt) && prepared.metrics?.preparedAt
+            ? prepared.metrics.preparedAt - pageLoadedAt
+            : null,
+      };
+      tracer.event("bridge.prepare.done", {
+        pr: prepared.pr.number,
+        state: prepared.preparation.state,
+        cacheHit: prepared.preparation.cacheHit,
+        contextCacheHit: prepared.contextCacheHit,
+        pageLoadToPreparedMs: prepared.metrics.pageLoadToPreparedMs,
+      });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(prepared));
+    } catch (e) {
+      const rec = tracer.error("bridge.prepare.error", e);
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: e.message, code: rec.code, loc: rec.loc }));
     }
   });
 }
@@ -204,8 +312,8 @@ async function runPreflight() {
   catch (e) { gh.detail = `gh not authenticated (${e.message.split("\n")[0]})`; }
   checks.push({ name: "gh auth", ok: gh.ok, detail: gh.detail });
 
-  const orch = await checkOrchestrator();
-  checks.push({ name: "orchestrator", ok: orch.ok, detail: orch.detail });
+  const agent = await agentRuntime.check();
+  checks.push({ name: "Cursor agent", ok: agent.ok, detail: agent.detail });
 
   return { ok: checks.every((c) => c.ok), checks };
 }
@@ -215,7 +323,10 @@ async function handleContext(url, res) {
   return withTracer(`context-${Date.now()}`, { prRef }, async (tracer) => {
     try {
       tracer.event("bridge.context.start", { prRef });
-      const ctx = await getContext(prRef);
+      const ctx = await getContext(
+        prRef,
+        (stage, detail) => tracer.event(stage, detail || {})
+      );
       tracer.event("bridge.context.done", { pr: ctx?.pr?.number, jiraKey: ctx?.jiraKey });
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(ctx));
@@ -230,14 +341,34 @@ async function handleContext(url, res) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let b = "";
-    req.on("data", (c) => (b += c));
-    req.on("end", () => resolve(b));
-    req.on("error", reject);
+    let bytes = 0;
+    let settled = false;
+    req.on("data", (c) => {
+      if (settled) return;
+      bytes += c.length;
+      if (bytes > MAX_BODY_BYTES) {
+        settled = true;
+        reject(new Error(`request body exceeds ${MAX_BODY_BYTES} bytes`));
+        req.resume();
+        return;
+      }
+      b += c;
+    });
+    req.on("end", () => {
+      if (!settled) resolve(b);
+    });
+    req.on("error", (error) => {
+      if (!settled) reject(error);
+    });
   });
 }
 
+function allowedOrigin(origin) {
+  return !origin || origin.startsWith("chrome-extension://");
+}
+
 // Fault isolation: a single in-flight session spawns many child processes
-// (docker exec, gh, git, claude) over several minutes. Before, ANY async error
+// (gh, git, ffmpeg, whisper, Cursor agent) over several minutes. Before, ANY async error
 // with no local catch — a child stdin EPIPE, a broken pipe, a stray rejection —
 // killed the whole process and every other in-flight session with it. Log and
 // stay up instead; the offending request already reports its own error, and the
@@ -257,7 +388,15 @@ server.on("error", (e) => {
   console.error(`[server] ${e?.stack || e}`);
 });
 
-server.listen(PORT, () => {
-  console.log(`\n  🎙️  voice-pr bridge running → http://localhost:${PORT}\n`);
+server.listen(PORT, HOST, () => {
+  console.log(`\n  🎙️  voice-pr bridge running → http://${HOST}:${PORT}\n`);
   console.log("  Load the extension, open a PR's Files changed tab, and talk.\n");
 });
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, async () => {
+    server.close();
+    await agentRuntime.shutdown();
+    process.exit(0);
+  });
+}

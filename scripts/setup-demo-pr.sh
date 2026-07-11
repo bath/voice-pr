@@ -55,7 +55,7 @@ git checkout -q main 2>/dev/null || true
 git pull -q origin main 2>/dev/null || true
 git checkout -q -b "$BRANCH"
 
-# --- refinery quality gates (so the orchestrator backend can merge) ---------
+# --- validation command the coding agent can discover and run ----------------
 cat > build.sh <<'EOF'
 #!/bin/sh
 # no build step for this demo

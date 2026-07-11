@@ -4,7 +4,7 @@
   the installed copy in ~/Library/LaunchAgents; re-run `npm run daemon:install`).
 
   Placeholders are substituted at install time so the agent runs against THIS
-  checkout with a PATH that resolves node/gh/docker/ffmpeg/whisper-cli — launchd
+  checkout with a PATH that resolves node/gh/git/ffmpeg/whisper-cli — launchd
   otherwise starts jobs with a bare PATH and the bridge's child processes vanish.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -17,6 +17,8 @@
        we keep its per-crash backoff underneath launchd's coarser keep-alive. -->
   <key>ProgramArguments</key>
   <array>
+    <string>/bin/bash</string>
+    <string>__RUNNER__</string>
     <string>__NODE__</string>
     <string>__SERVE__</string>
   </array>
