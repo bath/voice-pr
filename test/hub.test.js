@@ -84,9 +84,9 @@ test("done / failed jobs classify from the registry", async () => {
 
 test("no job + handed-off pending → awaiting (not a resend)", async () => {
   const { classifyPrState } = await loadHub();
-  const d = classifyPrState({ pending: { audioB64: "z" }, handoff: { handedOff: true, workItemId: "W-9" } });
+  const d = classifyPrState({ pending: { audioB64: "z" }, handoff: { handedOff: true, agentId: "agent-9" } });
   assert.equal(d.state, "awaiting");
-  assert.equal(d.workItemId, "W-9");
+  assert.equal(d.agentId, "agent-9");
 });
 
 test("no job + un-handed-off pending → genuine draft-unsent recovery", async () => {
@@ -98,7 +98,7 @@ test("no job + un-handed-off pending → genuine draft-unsent recovery", async (
 
 test("hub always has exactly one explicit record action and never auto-arms", async () => {
   const { renderHub } = await loadHub();
-  for (const decision of [{ state: "idle" }, { state: "done", job: { status: "done", prUrl: "p", summary: "ok", workItemId: "W" } }]) {
+  for (const decision of [{ state: "idle" }, { state: "done", job: { status: "done", prUrl: "p", summary: "ok", agentId: "agent-1" } }]) {
     const hub = renderHub(fakeDoc, { thisPr: { prUrl: "p", prNumber: 7 }, decision, fleet: [] });
     const recs = hub.byAction("record");
     assert.equal(recs.length, 1, "exactly one record affordance");
@@ -142,7 +142,7 @@ test("done card exposes the trail link + dismiss; failed card exposes retry", as
   const { renderHub } = await loadHub();
   const doneHub = renderHub(fakeDoc, {
     thisPr: { prUrl: "p", prNumber: 7 },
-    decision: { state: "done", job: { status: "done", prUrl: "p", summary: "Fixed retry backoff", workItemId: "W-1", trailCommentUrl: "https://x/1" } },
+    decision: { state: "done", job: { status: "done", prUrl: "p", summary: "Fixed retry backoff", agentId: "agent-1", trailCommentUrl: "https://x/1" } },
     fleet: [{ prUrl: "p", prNumber: 7, status: "done", label: "Fixed retry backoff", updatedAt: 1 }],
   });
   assert.equal(doneHub.all((n) => n.tag === "a" && n.getAttribute("href") === "https://x/1").length, 1);

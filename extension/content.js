@@ -1,7 +1,7 @@
 // voice-pr content script — lives on a GitHub PR page.
 // Press record, scroll the diff, and talk. Each spoken chunk is anchored to the
 // file+line centered in your viewport when you said it, then the whole session
-// is handed to the local bridge → orchestrator.
+// is handed to the local bridge → pre-warmed Cursor agent.
 (function () {
   const BRIDGE = "http://localhost:4100";
   const anchors = window.VoicePrAnchors.createAnchorResolver(document, window);
@@ -11,10 +11,13 @@
   const prUrl = `${location.origin}/${m[1]}/${m[2]}/pull/${m[3]}`;
   if (document.getElementById("voicepr-root")) return; // guard against re-inject
 
+  const pageLoadedAt = Date.now();
+  let pagePreparation = null;
+  let pagePreparationRequested = false;
   let recording = false;
   let segments = [];
   let anchorTimer = null;
-  let sessionId = null; // correlates the recording + transcript + orchestrator run
+  let sessionId = null; // correlates the recording + transcript + Cursor agent run
   // audio recording + anchor timeline (mapped to transcript on the bridge)
   let mediaRecorder = null,
     mediaStream = null,
@@ -33,7 +36,7 @@
   const HUD_FEED_MAX = 8;
   // Developer view (off by default) — one switch for the whole diagnostic
   // surface: mouse/scroll attention tracking, the live capture feed + "most
-  // attended" HUD, the gaze tracker, and the bridge→whisper→gh→orchestrator
+  // attended" HUD, the gaze tracker, and the bridge→whisper→gh→Cursor agent
   // preflight. Default (off) is a clean, voice-only panel: no passive signals
   // fire, so nothing misanchors your spoken comments and the viewport is the
   // only fallback anchor. TRACKED_SRCS are the mouse/scroll-derived signals
@@ -98,15 +101,15 @@
     "panel.": "extension/content.js — panel lifecycle",
     "record.": "extension/content.js — MediaRecorder controls (start/pause/stop)",
     "dispatch.": "extension/content.js — dispatch click + streaming port; extension/background.js relays it to the bridge",
-    "stage.": "server.js send() + lib/pipeline.js / lib/orchestrator.js emit() — grep the stage name after 'stage.'",
+    "stage.": "server.js send() + lib/pipeline.js / lib/agent.js emit() — grep the stage name after 'stage.'",
     "gaze.": "extension/content.js + extension/gaze.js — WebGazer overlay",
     "preflight.": "server.js runPreflight() — dependency probes",
     "mic.": "extension/content.js start() — navigator.mediaDevices.getUserMedia",
     "recover.": "extension/content.js initSurface() + extension/hub.js classifyPrState — on-load state decision & crash recovery",
     "bridge.": "server.js — HTTP endpoints",
     "exec.": "lib/exec.js — child processes (gh/git/docker/ffmpeg/whisper)",
-    "pipeline.": "lib/pipeline.js — session → PR → orchestrator submit",
-    "orchestrator.": "lib/orchestrator.js — docker exec into the pogo container",
+    "pipeline.": "lib/pipeline.js — session → PR → warm-agent submit",
+    "agent.": "lib/agent.js — managed workspace + Cursor SDK lifecycle",
   };
   function areasFor(codes) {
     const hits = new Set();
@@ -293,7 +296,7 @@
           <div class="vp-menu-wrap">
             <button id="vp-menu-btn" class="vp-icon" title="More" aria-haspopup="true" aria-expanded="false">⋯</button>
             <div id="vp-menu" class="vp-menu" role="menu" hidden>
-              <button id="vp-dev-btn" class="vp-menu-item" role="menuitemcheckbox" title="developer view — mouse/scroll attention tracking, the live capture feed + most-attended HUD, and the bridge→whisper→gh→orchestrator preflight (off by default; default is a clean voice-only panel)">🔧 Developer view</button>
+              <button id="vp-dev-btn" class="vp-menu-item" role="menuitemcheckbox" title="developer view — mouse/scroll attention tracking, the live capture feed + most-attended HUD, and the bridge→whisper→gh→Cursor-agent preflight (off by default; default is a clean voice-only panel)">🔧 Developer view</button>
               <button id="vp-gaze-btn" class="vp-menu-item" role="menuitemcheckbox" title="experimental: on-device webcam eye tracking (video never leaves your machine)" hidden>👁 Eye tracking</button>
             </div>
           </div>
@@ -405,16 +408,63 @@
     const s = Math.max(0, Math.floor(ms / 1000));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
+  let commitTimerPhase = "idle";
+  const commitTimer = window.VoicePrTimer.createElapsedTimer({
+    onTick: (elapsedMs) => renderCommitTimer(elapsedMs),
+  });
+
+  function renderCommitTimer(elapsedMs) {
+    if (!clockEl || commitTimerPhase === "idle") return;
+    const elapsed = fmtClock(elapsedMs);
+    clockEl.classList.remove("live", "waiting", "landed", "failed");
+    if (commitTimerPhase === "waiting") {
+      clockEl.textContent = `commit ${elapsed}`;
+      clockEl.title = "Elapsed since recording stopped; waiting for a commit on the PR";
+      clockEl.classList.add("waiting");
+    } else if (commitTimerPhase === "landed") {
+      clockEl.textContent = `commit ${elapsed} ✓`;
+      clockEl.title = `Commit landed on the PR in ${elapsed}`;
+      clockEl.classList.add("landed");
+    } else if (commitTimerPhase === "no-commit") {
+      clockEl.textContent = `no commit · ${elapsed}`;
+      clockEl.title = `Agent completed without a commit after ${elapsed}`;
+    } else {
+      clockEl.textContent = `failed · ${elapsed}`;
+      clockEl.title = `Dispatch failed after ${elapsed}`;
+      clockEl.classList.add("failed");
+    }
+  }
+
+  function startCommitTimer(startedAt) {
+    if (commitTimer.running()) return;
+    commitTimerPhase = "waiting";
+    commitTimer.start(startedAt);
+  }
+
+  function finishCommitTimer(phase, authoritativeMs = null) {
+    commitTimerPhase = phase;
+    commitTimer.stop(authoritativeMs);
+  }
+
+  function resetCommitTimer() {
+    commitTimer.reset();
+    commitTimerPhase = "idle";
+    if (!clockEl) return;
+    clockEl.textContent = "0:00";
+    clockEl.title = "";
+    clockEl.classList.remove("live", "waiting", "landed", "failed");
+  }
+
   function updateClock() {
     if (!clockEl) return;
     if (recording) clockEl.textContent = fmtClock(Date.now() - recStart);
-    else if (!paused) clockEl.textContent = "0:00";
+    else if (commitTimerPhase === "idle" && !paused) clockEl.textContent = "0:00";
     clockEl.classList.toggle("live", recording);
   }
 
   // ---------- unified log feed (captured anchors → dispatch progress) ---------
   // The log is the panel's spine: while recording it shows the anchor trail;
-  // after dispatch the same feed streams orchestrator progress. Auto-follows the
+  // after dispatch the same feed streams coding-agent progress. Auto-follows the
   // newest row (shadcn MessageScroller idea) and caps its length.
   const LOG_MAX = 80;
   function clearEmpty() {
@@ -505,6 +555,7 @@
     mediaStream?.getTracks().forEach((t) => t.stop());
     clearInterval(anchorTimer);
     clearInterval(attentionTimer);
+    resetCommitTimer();
     clearTimeout(scrollPauseTimer);
     stopBridgeWatch();
     try { activePort?.disconnect(); } catch {}
@@ -544,10 +595,7 @@
     debugEl.innerHTML = "";
     setContextChips();
     lastTrailKey = "";
-    if (clockEl) {
-      clockEl.textContent = "0:00";
-      clockEl.classList.remove("live");
-    }
+    resetCommitTimer();
     closeMenu();
     sendBtn.disabled = false;
     sendBtn.textContent = "Dispatch →";
@@ -628,7 +676,7 @@
     hubPanel.hidden = true;
     panel.hidden = false;
     pill.hidden = true;
-    loadContext();
+    warmAgent();
     paintLooking();
     pushTimeline("open");
     attentionTimer = setInterval(() => {
@@ -740,7 +788,7 @@
   // anything's wrong — running for EVERY session, not just dev view. Click it to
   // pop the per-check breakdown (with Recheck + Copy-diagnostic when there's a
   // problem); collapsed and out of the way otherwise.
-  const PREFLIGHT_STAGES = ["bridge", "ffmpeg", "whisper", "whisper model", "gh auth", "orchestrator"];
+  const PREFLIGHT_STAGES = ["bridge", "ffmpeg", "whisper", "whisper model", "gh auth", "Cursor agent"];
   const SERVE_CMD = "npm run serve"; // the one command that brings the bridge up
 
   // Auto-recover watch: while the bridge is unreachable, quietly re-probe it on a
@@ -809,7 +857,7 @@
         const b = document.createElement("button");
         b.className = "vp-ready-recheck";
         b.textContent = "Recheck";
-        b.addEventListener("click", () => runPreflight());
+        b.addEventListener("click", () => runPreflight(true));
         foot.appendChild(b);
       }
       // Same Copy-diagnostic report (with the AI prompt) as every other error surface.
@@ -818,12 +866,14 @@
     }
   }
 
-  async function runPreflight() {
+  async function runPreflight(force = false) {
     setReadyBadge("checking", "Checking you can record & submit…");
     renderReadyPop(PREFLIGHT_STAGES.map((name) => ({ name, pending: true, detail: "checking…" })));
     let resp;
     try {
-      resp = await new Promise((resolve) => chrome.runtime.sendMessage({ type: "preflight" }, resolve));
+      resp = await new Promise((resolve) =>
+        chrome.runtime.sendMessage({ type: "preflight", force }, resolve)
+      );
     } catch (e) {
       resp = { ok: false, error: String(e) };
     }
@@ -846,7 +896,7 @@
     });
     if (ok) {
       trace("preflight.done", { ok: true });
-      setReadyBadge("ready", "Ready — bridge, Whisper, GitHub & orchestrator all good (click for details)");
+      setReadyBadge("ready", "Ready — bridge, Whisper, GitHub & Cursor agent all good (click for details)");
       renderReadyPop(rows);
     } else {
       const failing = checks.filter((c) => !c.ok);
@@ -1010,21 +1060,96 @@
   // ---------- context chip (via the background worker) ------------------------
   // The content script can't hit localhost directly (Chrome blocks the loopback
   // address space); the background service worker makes the bridge calls.
-  function loadContext() {
-    ctxEl.innerHTML = chip("🎙 voice-pr", "brand") + chip("loading context…");
-    chrome.runtime.sendMessage({ type: "context", prUrl }, (res) => {
-      if (!res || !res.ok || res.json?.error) {
-        ctxEl.innerHTML =
-          chip("🎙 voice-pr", "brand") +
-          chip(`bridge not reachable — is the server running on ${BRIDGE}?`, "vp-warn");
-        return;
+  function schedulePagePreparation() {
+    const start = () => preparePage();
+    if (typeof requestIdleCallback === "function")
+      requestIdleCallback(start, { timeout: 1000 });
+    else setTimeout(start, 250);
+  }
+
+  function preparePage() {
+    if (pagePreparationRequested) return;
+    pagePreparationRequested = true;
+    trace("prepare.request", { pr: prUrl, pageLoadedAt });
+    chrome.runtime.sendMessage(
+      { type: "prepare", prUrl, pageLoadedAt },
+      (res) => {
+        if (!res || !res.ok || res.json?.error) {
+          trace("prepare.failed", {
+            message: res?.json?.error || res?.error || "bridge not reachable",
+          });
+          return;
+        }
+        pagePreparation = res.json;
+        trace("prepare.done", {
+          state: pagePreparation.preparation?.state,
+          cacheHit: pagePreparation.preparation?.cacheHit,
+          contextCacheHit: pagePreparation.contextCacheHit,
+          pageLoadToPreparedMs:
+            pagePreparation.metrics?.pageLoadToPreparedMs,
+        });
       }
-      const c = res.json;
-      const bits = [chip("🎙 voice-pr", "brand"), chip(`PR #${c.pr.number}`), chip(c.pr.branch)];
-      if (c.jiraKey) bits.push(chip(`🎫 ${c.jiraKey}`, "tk"));
-      if (c.checksSummary) bits.push(chip(`✔︎ ${c.checksSummary}`, "ok"));
+    );
+    // Prime the dependency probe while the page is idle. The background worker
+    // caches this response, so record-start normally renders it without I/O.
+    chrome.runtime.sendMessage({ type: "preflight" }, () => {});
+  }
+
+  function warmAgent() {
+    if (pagePreparation?.pr) {
+      const bits = [
+        chip("🎙 voice-pr", "brand"),
+        chip(`PR #${pagePreparation.pr.number}`),
+        chip(pagePreparation.pr.branch),
+      ];
+      if (pagePreparation.jiraKey)
+        bits.push(chip(`🎫 ${pagePreparation.jiraKey}`, "tk"));
+      bits.push(chip("repo prepared", "ok"));
       ctxEl.innerHTML = bits.join("");
-    });
+    } else {
+      ctxEl.innerHTML =
+        chip("🎙 voice-pr", "brand") + chip("pre-warming agent…");
+    }
+    trace("warm.request", { pr: prUrl });
+    chrome.runtime.sendMessage(
+      {
+        type: "warm",
+        prUrl,
+        sessionId,
+        recordStartedAt: sessionStart,
+      },
+      (res) => {
+        if (!res || !res.ok || res.json?.error) {
+          traceError(
+            "warm.failed",
+            res?.json?.error || res?.error || "bridge not reachable"
+          );
+          ctxEl.innerHTML =
+            chip("🎙 voice-pr", "brand") +
+            chip(
+              `bridge not reachable — is the server running on ${BRIDGE}?`,
+              "vp-warn"
+            );
+          return;
+        }
+        const c = res.json;
+        const bits = [
+          chip("🎙 voice-pr", "brand"),
+          chip(`PR #${c.pr.number}`),
+          chip(c.pr.branch),
+        ];
+        if (c.jiraKey) bits.push(chip(`🎫 ${c.jiraKey}`, "tk"));
+        if (c.checksSummary)
+          bits.push(chip(`✔︎ ${c.checksSummary}`, "ok"));
+        bits.push(chip("agent staged", "ok"));
+        ctxEl.innerHTML = bits.join("");
+        trace("warm.accepted", {
+          state: c.warm?.state,
+          branch: c.pr.branch,
+          contextCacheHit: c.contextCacheHit,
+        });
+      }
+    );
   }
 
   // ---------- audio recording ------------------------------------------------
@@ -1130,11 +1255,11 @@
   // the bridge is down or crashes mid-dispatch we must NOT lose it. So the
   // moment we have the audio we persist the full bundle to extension storage
   // (survives a tab refresh, a crash, even a browser restart), only clearing it
-  // once the orchestrator confirms a result. A failed dispatch is retryable —
+  // once the agent confirms a result. A failed dispatch is retryable —
   // no re-recording from zero.
   const PENDING_KEY = `voicepr:pending:${prUrl}`;
-  // Companion marker: set the moment the orchestrator accepts the hand-off (a
-  // work item now exists server-side). Its presence is what lets recovery tell
+  // Companion marker: set the moment the agent accepts the hand-off. Its
+  // presence is what lets recovery tell
   // "handed off, awaiting result" apart from "saved but never sent" — the saved
   // bundle alone can't, because the dispatch stream survives the tab
   // disconnecting, so a reload that races the terminal event leaves the bundle
@@ -1144,8 +1269,8 @@
   function savePending(bundle) {
     try { chrome.storage?.local?.set({ [PENDING_KEY]: { ...bundle, savedAt: Date.now() } }); } catch {}
   }
-  function markHandedOff(workItemId) {
-    try { chrome.storage?.local?.set({ [HANDOFF_KEY]: { handedOff: true, workItemId: workItemId || null, at: Date.now() } }); } catch {}
+  function markHandedOff(agentId) {
+    try { chrome.storage?.local?.set({ [HANDOFF_KEY]: { handedOff: true, agentId: agentId || null, at: Date.now() } }); } catch {}
   }
   function clearPending() {
     try { chrome.storage?.local?.remove([PENDING_KEY, HANDOFF_KEY]); } catch {}
@@ -1169,6 +1294,13 @@
   // bundle stays saved and we offer a retry instead of silently dropping it.
   function sendBundle(bundle) {
     let gotResult = false;
+    if (
+      commitTimerPhase !== "landed" &&
+      commitTimerPhase !== "no-commit" &&
+      Number.isFinite(bundle.recordingStoppedAt)
+    ) {
+      startCommitTimer(bundle.recordingStoppedAt);
+    }
     try {
       const port = chrome.runtime.connect({ name: "dispatch" });
       activePort = port;
@@ -1180,16 +1312,16 @@
           if (!gotResult) offerRetry(bundle, "the bridge closed before finishing — is the voice-pr server up?");
           return;
         }
-        // A work item now exists server-side (filed, then handed to the
-        // orchestrator). Persist that BEFORE any terminal event so a reload that
+        // An agent run now exists server-side. Persist that BEFORE any terminal
+        // event so a reload that
         // races the result doesn't fall back to the false "never dispatched"
-        // recovery — resending here would re-file a duplicate work item.
-        if (ev.stage === "work-filed" || ev.stage === "dispatching") {
-          markHandedOff(ev.detail?.id);
+        // recovery — resending here would start duplicate work.
+        if (ev.stage === "agent-running") {
+          markHandedOff(ev.detail?.agentId);
         }
         if (ev.stage === "result" || ev.stage === "done") {
           gotResult = true;
-          clearPending(); // the orchestrator has it now; safe to forget
+          clearPending(); // the agent completed; safe to forget
         }
         onEvent(ev);
       });
@@ -1264,14 +1396,14 @@
       trail || "(empty)",
       "",
       "===== FOR AN AI AGENT =====",
-      "You are debugging voice-pr: a Chrome extension (extension/) + a local Node bridge (server.js + lib/) that turns spoken GitHub-PR feedback into orchestrator work items. An error above interrupted a session. To find and fix it:",
+      "You are debugging voice-pr: a Chrome extension (extension/) + a local Node bridge (server.js + lib/) that sends spoken GitHub-PR feedback to a pre-warmed Cursor SDK agent. An error above interrupted a session. To find and fix it:",
       "",
       `1. Read the authoritative server-side trail: ~/.voice-pr/sessions/${sid}/trace.ndjson  (or run \`npm run trace ${sid === "(none — never started a session)" ? "" : sid}\`). Every line is {seq, t, level, sessionId, code, loc, detail}; the last level:"error" record is the proximate cause and its \`loc\` is the file:line that threw.`,
       "2. Every `code` in this report is a literal string in the source — grep for it to land on the exact emit site. `loc` pins direct calls precisely; for `stage.*` codes, grep the part after `stage.`.",
       "3. Given the codes seen this session, the failure is most likely in:",
       ...areasFor(codes).map((a) => `     - ${a}`),
       "4. The end-to-end flow, in order — walk it until a step's trace stops matching the happy path:",
-      "     extension/content.js (record → Dispatch click) → extension/background.js (relays to the bridge; content scripts can't hit localhost) → server.js POST /api/dispatch → lib/pipeline.js runSession → lib/orchestrator.js (docker exec into the 'codingagent' pogo container) → lib/exec.js (the real gh/git/docker/ffmpeg/whisper child processes; `exec.fail` records carry the child's stderr — usually the smoking gun).",
+      "     extension/content.js (page-load POST /api/prepare → record + POST /api/warm → Dispatch click) → extension/background.js (relays to the bridge; content scripts can't hit localhost) → server.js /api/prepare or /api/dispatch → lib/pipeline.js → lib/agent.js (prepared worktree + Cursor SDK) → lib/exec.js (gh/git/ffmpeg/whisper child processes; `exec.fail` records carry stderr — usually the smoking gun).",
       "5. If nothing in the trail reached a `bridge.*` code, the bridge was never contacted — the fault is client-side (extension/content.js, extension/background.js) or the bridge is down (`npm run serve`).",
       "6. Report the root cause as code + file:line, then the minimal fix.",
       "=======================================",
@@ -1298,6 +1430,7 @@
 
   function offerRetry(bundle, why) {
     dispatched = false; // let the user try again without re-recording
+    finishCommitTimer("failed");
     traceError("dispatch.failed", why);
     const kb = Math.round(((bundle.audioB64?.length || 0) * 0.75) / 1024);
     line(
@@ -1328,6 +1461,8 @@
   sendBtn.addEventListener("click", async () => {
     if (dispatched) return;
     dispatched = true;
+    const recordingStoppedAt = Date.now();
+    startCommitTimer(recordingStoppedAt);
     trace("dispatch.click", { typed: segments.length, timeline: timeline.length });
     // recording is over — clear the red indicator immediately (don't leave a
     // stuck "❚❚ Pause" button).
@@ -1347,17 +1482,17 @@
     sendBtn.textContent = "Sent ✓";
     pipe = renderPipeline();
     logRow(
-      "You can close this tab — transcription + the work run on the server; your recording is saved locally until the orchestrator confirms.",
+      "You can close this tab — transcription + the warm agent run on the server; your recording is saved locally until it confirms.",
       { cls: "reassure" }
     );
     const audio = await stopAndGetAudio();
-    const bundle = { prRef: prUrl, sessionId, typedSegments: segments, timeline, audioStartMs, ...(audio || {}) };
+    const bundle = { prRef: prUrl, sessionId, recordingStoppedAt, typedSegments: segments, timeline, audioStartMs, ...(audio || {}) };
     savePending(bundle); // durable BEFORE the first network attempt
     sendBundle(bundle);
   });
 
   // ---------- dispatch pipeline: a FIXED checklist, defined once --------------
-  // The steps from "stop recording" to "in the orchestrator's hands" are known
+  // The steps from "stop recording" to "patch ready" are known
   // up front, so we render them all at dispatch time and flip each pending →
   // active → done in place as events arrive. Nothing appends, the panel never
   // grows or scrolls mid-run, and unexpected events are ignored rather than
@@ -1366,12 +1501,9 @@
   const PIPELINE = [
     { id: "transcribe", idle: "Transcribe audio", doing: "Transcribing audio…" },
     { id: "comments", idle: "Detect comments", doing: "Listening for comments…" },
-    { id: "pr", idle: "Load PR", doing: "Loading PR…" },
-    { id: "context", idle: "Gather context", doing: "Gathering context…" },
-    { id: "register", idle: "Register repo", doing: "Registering repo…" },
-    { id: "file", idle: "File work item", doing: "Filing work item…" },
-    { id: "handoff", idle: "Hand to the orchestrator", doing: "Handing off…" },
-    { id: "work", idle: "Orchestrator working", doing: "Orchestrator working…" },
+    { id: "context", idle: "Connect prepared agent", doing: "Connecting prepared agent…" },
+    { id: "interpret", idle: "Interpret requests", doing: "Interpreting requests…" },
+    { id: "work", idle: "Edit, validate & push", doing: "Agent editing and validating…" },
     { id: "trail", idle: "Post intent trail", doing: "Posting intent trail…" },
   ];
   let pipe = null; // active pipeline controller (null until dispatch)
@@ -1426,6 +1558,7 @@
     if (stage === "agent-log") return;
     if (!pipe) return; // events are only meaningful once the pipeline is shown
     if (stage === "error") {
+      finishCommitTimer("failed");
       pipe.failActive(`Failed — ${d.message || "error"}`);
       return;
     }
@@ -1436,56 +1569,59 @@
       case "transcribed":
         pipe.complete("transcribe");
         pipe.complete("comments", `Heard ${plural(d.count ?? 0, "comment")}`);
-        pipe.activate("pr");
+        pipe.activate("context");
         break;
       case "pr-loaded":
-        pipe.complete("pr", d.branch ? `Loaded PR · ${d.branch}` : "Loaded PR");
-        pipe.activate("context");
+        pipe.note("context", d.branch ? `Warm context · ${d.branch}` : "Warm context");
         break;
       case "context": {
         const bits = [plural(d.segments ?? 0, "comment")];
         if (d.jiraKey) bits.push(d.jiraKey);
         if (d.checksSummary) bits.push(d.checksSummary);
-        pipe.complete("context", `Context · ${bits.join(" · ")}`);
-        pipe.activate("register");
+        pipe.note("context", `Context · ${bits.join(" · ")}`);
         break;
       }
-      case "project-ready":
-        pipe.complete("register");
-        pipe.activate("file");
+      case "agent-starting":
+        pipe.activate("context");
         break;
-      case "work-filed":
-        pipe.complete("file", d.id ? `Filed ${d.id}` : "Filed work item");
-        pipe.activate("handoff");
+      case "agent-warm-waiting":
+        pipe.note(
+          "context",
+          `Waiting for agent setup · ${Math.max(
+            0,
+            Math.floor((d.elapsedMs || 0) / 1000)
+          )}s`
+        );
         break;
-      case "dispatching":
-        pipe.complete("handoff", "In the orchestrator's hands");
+      case "agent-ready":
+        pipe.complete("context", d.warmWaitMs ? `Agent ready · waited ${(d.warmWaitMs / 1000).toFixed(1)}s` : "Agent ready");
+        pipe.activate("interpret");
+        break;
+      case "interpreting":
+        pipe.activate("interpret");
+        break;
+      case "agent-running":
+        pipe.complete("interpret");
         pipe.activate("work");
         break;
-      case "work-status":
-        pipe.note("work", `Orchestrator working${d.status ? ` · ${d.status}` : ""}`);
+      case "agent-pushing":
+        pipe.note("work", `Pushing to ${d.branch || "PR branch"}…`);
         break;
-      case "refinery":
-        pipe.note("work", `Refinery${d.status ? ` · ${d.status}` : ""}`);
+      case "agent-finished":
+        finishCommitTimer(d.commits ? "landed" : "no-commit");
+        pipe.complete("work", d.commits ? `Pushed ${plural(d.commits, "commit")}` : "Review complete");
+        if (d.commits) pipe.activate("trail", "Posting intent trail…");
+        else pipe.complete("trail", "No intent trail needed");
         break;
-      // Commits landed on the PR branch — the ground-truth completion signal.
-      // Advance past "Orchestrator working" immediately rather than waiting on
-      // the poll/headline-matched `commenting` event (which may never fire).
-      case "commits-landed":
-        pipe.complete("work", d.count ? `Merged ${plural(d.count, "commit")}` : "Merged");
-        pipe.activate("trail");
+      case "comment-queued":
+        pipe.complete("trail", "Intent trail posting in background");
         break;
       case "commenting":
         pipe.complete("work");
         pipe.activate("trail");
         break;
-      // Queued behind another dispatch on the same branch: say so on the active
-      // step instead of spinning a silent "Registering repo…".
       case "branch-queued":
-        pipe.note("register", `Queued behind an earlier dispatch${d.position ? ` · position ${d.position}` : ""}…`);
-        break;
-      case "branch-dispatch-start":
-        pipe.activate("register");
+        pipe.note("context", `Queued behind an earlier run${d.position ? ` · position ${d.position}` : ""}…`);
         break;
       // re-signaled and anything else: ignored — the fixed checklist doesn't
       // react to every event.
@@ -1496,6 +1632,11 @@
 
   function done(r) {
     const ok = r.status === "done";
+    const latency = r.metrics?.stopToPatchMs;
+    finishCommitTimer(
+      ok && r.commits?.length ? "landed" : ok ? "no-commit" : "failed",
+      Number.isFinite(latency) ? latency : null
+    );
     if (pipe) {
       if (ok) pipe.completeRemaining();
       else pipe.failActive(`${r.status === "failed" ? "Failed" : "Incomplete"}`);
@@ -1508,7 +1649,9 @@
     box.appendChild(head);
     const sub = document.createElement("div");
     sub.className = "sub";
-    sub.textContent = `work item ${r.workItemId}${r.refinery ? ` · refinery ${r.refinery.status}` : ""}`;
+    sub.textContent =
+      `agent ${r.agentId || "—"}` +
+      (Number.isFinite(latency) ? ` · stop → patch ${(latency / 1000).toFixed(1)}s` : "");
     box.appendChild(sub);
     if (r.trailCommentUrl) {
       const a = document.createElement("a");
@@ -1546,6 +1689,7 @@
   // idle we leave the quiet pill; its badge (and the toolbar badge) still
   // reflect work in flight on other PRs.
   function initSurface() {
+    schedulePagePreparation();
     loadFleet((jobs) => {
       updatePillBadge(jobs);
       const job = jobs[prUrl] || null;
