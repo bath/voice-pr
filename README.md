@@ -88,6 +88,37 @@ After Dispatch, the capture-panel clock switches from recording duration to a
 live `commit 0:00` timer. It stops when the harness has pushed the commit to the
 PR branch and is corrected to the server-authoritative `stopToPatchMs` result.
 
+## Menial fast path experiment
+
+For one anchored snippet-replace request, the bridge can skip the Cursor agent
+entirely and apply the edit deterministically:
+
+```bash
+VOICE_PR_MENIAL_FAST_PATH=1 npm run daemon:restart
+```
+
+Qualifying requests today:
+
+- exactly one spoken/typed segment
+- anchored to a file plus selected snippet text
+- speech matches `change this to …`, `rename … to …`, or `replace … with …`
+- the snippet appears exactly once in the target file
+
+Dry-run the parser/applier against the bundled fixture:
+
+```bash
+npm run menial:demo
+```
+
+On a real PR:
+
+1. Open the PR **Files changed** view and select the exact text to replace.
+2. Record or type: `change this to YourNewText`.
+3. Dispatch.
+
+Successful runs return `backend: "menial-fast-path"` with `inferenceTurnsBeforeStop: 0`.
+Anything ambiguous falls back to the normal agent path automatically.
+
 ## Requirements
 
 - Node.js **22.13+**

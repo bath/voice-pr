@@ -1612,6 +1612,16 @@
       case "interpreting":
         pipe.activate("interpret");
         break;
+      case "menial-attempt":
+        pipe.activate("interpret", "Checking menial fast path…");
+        break;
+      case "menial-applied":
+        pipe.complete("interpret", "Applied anchored edit");
+        pipe.activate("work", "Committing deterministic change…");
+        break;
+      case "menial-fallback":
+        pipe.note("interpret", "Using full agent…");
+        break;
       case "agent-running":
         pipe.complete("interpret");
         pipe.activate("work");

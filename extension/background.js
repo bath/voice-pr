@@ -259,6 +259,9 @@ function patchForEvent(ev) {
     case "agent-warm-waiting": return { status: "running", label: `${d.pipelineVariant === "single-turn" ? "Waiting for agent setup" : "Waiting for agent pre-warm"} · ${Math.max(0, Math.floor((d.elapsedMs || 0) / 1000))}s` };
     case "agent-ready": return { status: "running", label: d.warmWaitMs ? `Agent ready · waited ${(d.warmWaitMs / 1000).toFixed(1)}s` : "Agent ready" };
     case "interpreting": return { status: "running", label: "Interpreting requests…" };
+    case "menial-attempt": return { status: "running", label: "Checking menial fast path…" };
+    case "menial-applied": return { status: "running", label: "Applying anchored edit…" };
+    case "menial-fallback": return { status: "running", label: "Using full agent…" };
     case "agent-running": return { status: "running", label: "Agent editing and validating…", agentId: d.agentId ?? null, runId: d.runId ?? null };
     case "agent-pushing": return { status: "running", label: `Pushing to ${d.branch || "PR branch"}…` };
     case "agent-finished": return { status: "running", label: d.commits ? `Pushed ${d.commits} commit${d.commits === 1 ? "" : "s"}` : "Review complete" };
