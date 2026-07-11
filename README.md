@@ -99,10 +99,11 @@ VOICE_PR_MENIAL_FAST_PATH=1 npm run daemon:restart
 
 Qualifying requests today:
 
-- exactly one spoken/typed segment
-- anchored to a file plus selected snippet text
-- speech matches `change this to …`, `rename … to …`, or `replace … with …`
-- the snippet appears exactly once in the target file
+- exactly one spoken/typed segment with a file anchor
+- speech matches `change X to Y`, `change this to …`, `rename … to …`, or `replace … with …`
+- for `change X to Y`, a line anchor is enough (no text selection required)
+- for `change this to …`, select the exact snippet in the diff
+- the old value must be unique on the anchored line (or in the file for snippet mode)
 
 Dry-run the parser/applier against the bundled fixture:
 
