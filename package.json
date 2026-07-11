@@ -18,7 +18,7 @@
     "demo": "bash scripts/setup-demo-pr.sh",
     "trace": "node scripts/trace.js",
     "test": "node --test && node scripts/validate-extension-gaze.js",
-    "check": "bash -n scripts/daemon.sh scripts/run-daemon.sh && node --check server.js && node --check scripts/serve.js && node --check scripts/trace.js && node --check extension/anchors.js && node --check extension/recovery.js && node --check extension/hub.js && node --check extension/content.js && node --check extension/background.js && node --check extension/gaze.js && node --check lib/agent.js && node --check lib/archive.js && node --check lib/exec.js && node --check lib/github.js && node --check lib/prompt.js && node --check lib/pipeline.js && node --check lib/transcribe.js && node --check lib/trace.js && npm test"
+    "check": "bash -n scripts/daemon.sh scripts/run-daemon.sh && node --check server.js && node --check scripts/serve.js && node --check scripts/trace.js && node --check extension/anchors.js && node --check extension/recovery.js && node --check extension/hub.js && node --check extension/timer.js && node --check extension/content.js && node --check extension/background.js && node --check extension/gaze.js && node --check lib/agent.js && node --check lib/archive.js && node --check lib/exec.js && node --check lib/github.js && node --check lib/prompt.js && node --check lib/pipeline.js && node --check lib/transcribe.js && node --check lib/trace.js && npm test"
   },
   "dependencies": {
     "@cursor/sdk": "^1.0.23"

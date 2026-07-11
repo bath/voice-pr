@@ -158,7 +158,7 @@ async function main() {
     "2. Every `code` is a literal string in the source — `git grep` it to find the exact emit site. `exec.fail` records carry the failing child process's stderr (gh/git/docker/ffmpeg/whisper) and are usually the real cause."
   );
   out.push(
-    "3. Happy-path flow — walk it until a step's trace diverges: content.js (record + warm → Dispatch) → background.js (relay) → server.js /api/dispatch → lib/pipeline.js runSession → lib/agent.js (Cursor SDK + managed worktree) → lib/exec.js (child processes)."
+    "3. Happy-path flow — walk it until a step's trace diverges: content.js (page-load prepare → record + warm → Dispatch) → background.js (relay) → server.js /api/prepare or /api/dispatch → lib/pipeline.js → lib/agent.js (prepared worktree + Cursor SDK) → lib/exec.js (child processes)."
   );
   out.push(
     "4. The recording + transcript for this session are in the same dir (audio.*, transcript.json) if you need to reproduce."

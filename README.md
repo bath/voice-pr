@@ -1,18 +1,23 @@
 # voice-pr
 
-Speak while reviewing your GitHub PR. The extension anchors speech to the diff
-while a local Cursor coding agent preloads the PR, Jira context, repository, and
-relevant code. When recording stops, local Whisper transcribes the audio and the
-already-warm agent interprets the fuzzy requests, edits, validates, commits, and
-pushes to the PR branch.
+Speak while reviewing your GitHub PR. As soon as the page loads, the extension
+deterministically resolves the PR context, refreshes a repository mirror, and
+prepares a reusable PR-head worktree. Explicit Record then starts a local Cursor
+agent immediately from that prepared state. When recording stops, local Whisper
+transcribes the audio and the already-warm agent interprets the fuzzy requests,
+edits, validates, and commits; the bridge pushes to the PR branch.
 
 ## Pipeline
 
 ```text
 Chrome extension
+  PR page loads ──► POST /api/prepare
+                    resolve + cache PR, Jira key, and CI
+                    clone/fetch mirror + prepare PR-head worktree
+                    no microphone, Cursor agent, or inference
+
   record starts ──► POST /api/warm
-                    resolve PR + Jira key + CI
-                    prepare cached worktree
+                    lease the prepared worktree
                     Cursor SDK agent analyzes PR/diff/files
 
   record stops  ──► POST /api/dispatch
@@ -43,14 +48,21 @@ stop-to-patch = patchReadyAt - recordingStoppedAt
 
 Each result includes:
 
+- `recordToAgentWarmingMs` — record click to the first inference turn
+- `preparationHit` and `preparationAgeMs`
 - `warmMs`
 - `warmWaitMs` — warm work still on the critical path after recording stopped
 - `executionMs`
 - `stopToPatchMs`
 
-Compare median and p95 `stopToPatchMs` against cold-path recordings. Patch
-acceptance, stale-branch failures, and wasted abandoned warm sessions are
+Page-load traces also include `pageLoadToPreparedMs`. Compare median and p95
+`stopToPatchMs` and `recordToAgentWarmingMs` against cold-path recordings. Patch
+acceptance, stale-head refreshes, expired unused preparations, and disk usage are
 guardrails.
+
+After Dispatch, the capture-panel clock switches from recording duration to a
+live `commit 0:00` timer. It stops when the harness has pushed the commit to the
+PR branch and is corrected to the server-authoritative `stopToPatchMs` result.
 
 ## Requirements
 
@@ -99,8 +111,10 @@ npm run daemon:logs
 
 `server.js` exposes:
 
-- `POST /api/warm` — starts workspace preparation and agent analysis at record
-  start; returns PR context immediately after the warm job is accepted.
+- `POST /api/prepare` — performs deterministic context, mirror, and PR-head
+  worktree preparation on passive page load; never starts inference.
+- `POST /api/warm` — atomically leases prepared state and starts agent analysis
+  at explicit record start.
 - `POST /api/dispatch` — transcribes, anchors, and sends the final instructions
   to that same agent while streaming NDJSON progress.
 - `GET /api/preflight` — checks Whisper, GitHub auth, and Cursor SDK auth.
@@ -112,7 +126,10 @@ extension origins, and caps request bodies at 100 MB.
 `lib/agent.js` owns the hot agent:
 
 - Bare repository mirrors live under `~/.voice-pr/repo-cache`.
-- Session worktrees live under `~/.voice-pr/workspaces`.
+- Prepared and session worktrees live under `~/.voice-pr/workspaces`.
+- PR-head preparations are deduplicated, capped, and expire after 10 minutes.
+- A prepared worktree is atomically leased to one recording; concurrent
+  recordings receive isolated worktrees.
 - Concurrent recordings can warm independently.
 - Final writes to the same PR branch remain serialized.
 - The branch is fetched again before execution; only fast-forward drift is
@@ -134,6 +151,10 @@ amends.
 | `CURSOR_API_KEY` | required | Cursor SDK authentication |
 | `VOICE_PR_MODEL` | `composer-2.5` with `fast=true` | Cursor model ID override; setting it disables the default Fast parameter |
 | `VOICE_PR_AGENT_TTL_MS` | `1800000` | Abandoned warm-agent lifetime |
+| `VOICE_PR_PREPARE_TTL_MS` | `600000` | Unused page-load preparation lifetime |
+| `VOICE_PR_PREPARE_MAX` | `6` | Maximum concurrent prepared/leased PR heads |
+| `VOICE_PR_CONTEXT_TTL_MS` | `120000` | PR/Jira/CI context cache lifetime |
+| `VOICE_PR_CONTEXT_CACHE_MAX` | `50` | Maximum cached PR context entries |
 | `VOICE_PR_WORKSPACE_DIR` | `~/.voice-pr/workspaces` | Session worktrees |
 | `VOICE_PR_REPO_CACHE_DIR` | `~/.voice-pr/repo-cache` | Bare repository mirrors |
 | `VOICE_PR_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
@@ -147,6 +168,15 @@ npm run check
 npm run trace
 npm run trace <sessionId>
 ```
+
+Every page-load preparation prints its cache decisions to the bridge console and
+the structured trace. A cold path reports `context-cache-miss`,
+`repo-cache-miss`, and `workspace-cache-miss` followed by the corresponding
+`*-created` events. A warm path reports `context-cache-hit` and
+`preparation-cache-hit` without Git I/O. After a bridge restart, persistent
+state is validated with `repo-cache-hit` followed by `repo-cache-current` or
+`repo-cache-updated`; stale worktrees and TTL/capacity evictions emit explicit
+`*-invalidated` events with a reason.
 
 The extension saves a pending recording until the agent returns a terminal
 result. Session audio, transcript, timing events, result, and structured trace

@@ -82,6 +82,30 @@ test("events also fan out to the global rolling log", async () => {
   assert.match(global, /"sessionId":"sess-F"/);
 });
 
+test("cache decisions include human-readable console status", async () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (line) => lines.push(String(line));
+  try {
+    await withTracer("sess-cache", {}, async (t) =>
+      t.event("repo-cache-current", {
+        action: "remote validation found no changes",
+        headSha: "abcdef123456",
+      })
+    );
+  } finally {
+    console.log = original;
+  }
+  assert.ok(
+    lines.some(
+      (line) =>
+        line.includes("repo-cache-current") &&
+        line.includes("remote validation found no changes") &&
+        line.includes("abcdef12")
+    )
+  );
+});
+
 test("areasFor maps code prefixes to source locations, with a fallback", () => {
   const areas = areasFor(["exec.fail", "agent.warm"]);
   assert.ok(areas.some((a) => a.includes("lib/exec.js")));

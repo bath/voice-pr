@@ -8,13 +8,23 @@ const pr = {
   number: 7,
   title: "Add retry",
   headRefName: "feat",
+  headRefOid: "a".repeat(40),
 };
 const segments = [{ text: "this needs backoff", file: "lib/net.js", line: 12 }];
 
-function harness({ executionStatus = "finished", model = "test-model" } = {}) {
+function harness({
+  executionStatus = "finished",
+  model = "test-model",
+  prepareTtlMs = 60_000,
+  prepareMax = 6,
+  preparedHead = null,
+  warmDelayMs = 0,
+  warmHeartbeatMs = 1_000,
+} = {}) {
   const prompts = [];
   const sendOptions = [];
   const commands = [];
+  const prepareCalls = [];
   let disposed = 0;
   let createdWith = null;
   let headReads = 0;
@@ -30,6 +40,8 @@ function harness({ executionStatus = "finished", model = "test-model" } = {}) {
       return {
         id: warm ? "warm-run" : "execute-run",
         async wait() {
+          if (warm && warmDelayMs)
+            await new Promise((resolve) => setTimeout(resolve, warmDelayMs));
           return warm
             ? { id: "warm-run", status: "finished", result: "READY" }
             : {
@@ -82,12 +94,23 @@ function harness({ executionStatus = "finished", model = "test-model" } = {}) {
     apiKey: "test-key",
     ...(model ? { model } : {}),
     ttlMs: 60_000,
+    prepareTtlMs,
+    prepareMax,
+    warmHeartbeatMs,
     createAgent: async (options) => {
       createdWith = options;
       return agent;
     },
     listModels: async () => [{ id: "test-model" }],
-    prepareWorkspace: async () => ({ path: "/tmp/voice-pr-agent-test", headSha: base }),
+    prepareWorkspace: async (input) => {
+      prepareCalls.push(input);
+      return {
+        path: `/tmp/voice-pr-agent-test/${input.sessionId}`,
+        headSha: preparedHead || base,
+        mirror: "/tmp/voice-pr-agent-test.git",
+        localBranch: `voice-pr/${input.sessionId}`,
+      };
+    },
     runCommand,
   });
   return {
@@ -95,6 +118,7 @@ function harness({ executionStatus = "finished", model = "test-model" } = {}) {
     prompts,
     sendOptions,
     commands,
+    prepareCalls,
     createdWith: () => createdWith,
     disposed: () => disposed,
   };
@@ -112,6 +136,101 @@ test("warm starts immediately and performs the expensive analysis turn", async (
   assert.equal(createdWith().local.sandboxOptions.enabled, true);
   assert.ok(!createdWith().local.settingSources.includes("project"));
   assert.equal(sendOptions[0].mode, "plan");
+  await runtime.shutdown();
+});
+
+test("passive preparation coalesces by PR head and never creates an agent", async () => {
+  const { runtime, prepareCalls, prompts, createdWith } = harness();
+  const events = [];
+  const emit = (stage, detail) => events.push({ stage, detail });
+  const first = await runtime.preparePr({ pr, emit });
+  const second = await runtime.preparePr({ pr, emit });
+  assert.equal(first.state, "ready");
+  assert.equal(first.cacheHit, false);
+  assert.equal(second.cacheHit, true);
+  assert.equal(prepareCalls.length, 1);
+  assert.equal(prompts.length, 0);
+  assert.equal(createdWith(), null);
+  assert.ok(events.some((event) => event.stage === "preparation-cache-miss"));
+  assert.ok(events.some((event) => event.stage === "preparation-cache-hit"));
+  await runtime.shutdown();
+});
+
+test("preparation rekeys itself when the mirror observes a newer PR head", async () => {
+  const newer = "c".repeat(40);
+  const movingPr = { ...pr };
+  const { runtime } = harness({ preparedHead: newer });
+  const events = [];
+  const result = await runtime.preparePr({
+    pr: movingPr,
+    emit: (stage, detail) => events.push({ stage, detail }),
+  });
+  assert.equal(movingPr.headRefOid, newer);
+  assert.match(result.key, new RegExp(`@${newer}$`));
+  assert.ok(events.some((event) => event.stage === "workspace-prepare-refreshed"));
+  await runtime.shutdown();
+});
+
+test("record start atomically leases the prepared PR-head worktree", async () => {
+  const { runtime, prepareCalls, createdWith } = harness();
+  await runtime.preparePr({ pr });
+  const events = [];
+  runtime.warm({
+    sessionId: "prepared-session",
+    pr,
+    context: {},
+    recordStartedAt: Date.now(),
+    emit: (stage, detail) => events.push({ stage, detail }),
+  });
+  await waitFor(() => runtime.status("prepared-session")?.state === "ready");
+  assert.equal(prepareCalls.length, 1, "warm must not create a second worktree");
+  assert.match(createdWith().local.cwd, /prepared-o-r-7-/);
+  assert.ok(
+    events.some(
+      (event) =>
+        event.stage === "workspace-ready" &&
+        event.detail.preparationHit === true
+    )
+  );
+  await runtime.shutdown();
+});
+
+test("a second concurrent recording cannot share an already-leased worktree", async () => {
+  const { runtime, prepareCalls } = harness();
+  await runtime.preparePr({ pr });
+  runtime.warm({ sessionId: "lease-a", pr, context: {} });
+  runtime.warm({ sessionId: "lease-b", pr, context: {} });
+  await waitFor(
+    () =>
+      runtime.status("lease-a")?.state === "ready" &&
+      runtime.status("lease-b")?.state === "ready"
+  );
+  assert.equal(
+    prepareCalls.length,
+    2,
+    "one recording leases the prepared tree; the other gets an isolated tree"
+  );
+  await runtime.shutdown();
+});
+
+test("unused prepared worktrees expire and are removed", async () => {
+  const { runtime, commands, createdWith } = harness({ prepareTtlMs: 5 });
+  const events = [];
+  await runtime.preparePr({
+    pr,
+    emit: (stage, detail) => events.push({ stage, detail }),
+  });
+  await waitFor(() =>
+    commands.some((call) => call.args.join(" ").includes("worktree remove --force"))
+  );
+  assert.equal(createdWith(), null);
+  assert.ok(
+    events.some(
+      (event) =>
+        event.stage === "preparation-cache-invalidated" &&
+        /TTL expired/.test(event.detail.reason)
+    )
+  );
   await runtime.shutdown();
 });
 
@@ -146,6 +265,30 @@ test("execute reuses the warm agent for interpretation, edits, validation, commi
   assert.ok(events.some((event) => event.stage === "agent-ready"));
   assert.ok(events.some((event) => event.stage === "agent-finished"));
   assert.equal(disposed(), 1);
+});
+
+test("execute emits heartbeat progress while the warm turn is still running", async () => {
+  const { runtime } = harness({ warmDelayMs: 20, warmHeartbeatMs: 5 });
+  const events = [];
+  runtime.warm({ sessionId: "slow-warm", pr, context: {} });
+  await runtime.execute({
+    sessionId: "slow-warm",
+    pr,
+    context: {},
+    segments,
+    emit: (stage, detail) => events.push({ stage, detail }),
+  });
+  const waiting = events.filter(
+    (event) => event.stage === "agent-warm-waiting"
+  );
+  assert.ok(waiting.length >= 2);
+  assert.equal(waiting[0].detail.state, "warming");
+  assert.ok(waiting.some((event) => event.detail.elapsedMs >= 5));
+  assert.ok(
+    events.findIndex((event) => event.stage === "agent-warm-waiting") <
+      events.findIndex((event) => event.stage === "agent-ready")
+  );
+  await runtime.shutdown();
 });
 
 test("execute is idempotent for a completed session", async () => {

@@ -11,6 +11,9 @@
   const prUrl = `${location.origin}/${m[1]}/${m[2]}/pull/${m[3]}`;
   if (document.getElementById("voicepr-root")) return; // guard against re-inject
 
+  const pageLoadedAt = Date.now();
+  let pagePreparation = null;
+  let pagePreparationRequested = false;
   let recording = false;
   let segments = [];
   let anchorTimer = null;
@@ -405,10 +408,57 @@
     const s = Math.max(0, Math.floor(ms / 1000));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
+  let commitTimerPhase = "idle";
+  const commitTimer = window.VoicePrTimer.createElapsedTimer({
+    onTick: (elapsedMs) => renderCommitTimer(elapsedMs),
+  });
+
+  function renderCommitTimer(elapsedMs) {
+    if (!clockEl || commitTimerPhase === "idle") return;
+    const elapsed = fmtClock(elapsedMs);
+    clockEl.classList.remove("live", "waiting", "landed", "failed");
+    if (commitTimerPhase === "waiting") {
+      clockEl.textContent = `commit ${elapsed}`;
+      clockEl.title = "Elapsed since recording stopped; waiting for a commit on the PR";
+      clockEl.classList.add("waiting");
+    } else if (commitTimerPhase === "landed") {
+      clockEl.textContent = `commit ${elapsed} ✓`;
+      clockEl.title = `Commit landed on the PR in ${elapsed}`;
+      clockEl.classList.add("landed");
+    } else if (commitTimerPhase === "no-commit") {
+      clockEl.textContent = `no commit · ${elapsed}`;
+      clockEl.title = `Agent completed without a commit after ${elapsed}`;
+    } else {
+      clockEl.textContent = `failed · ${elapsed}`;
+      clockEl.title = `Dispatch failed after ${elapsed}`;
+      clockEl.classList.add("failed");
+    }
+  }
+
+  function startCommitTimer(startedAt) {
+    if (commitTimer.running()) return;
+    commitTimerPhase = "waiting";
+    commitTimer.start(startedAt);
+  }
+
+  function finishCommitTimer(phase, authoritativeMs = null) {
+    commitTimerPhase = phase;
+    commitTimer.stop(authoritativeMs);
+  }
+
+  function resetCommitTimer() {
+    commitTimer.reset();
+    commitTimerPhase = "idle";
+    if (!clockEl) return;
+    clockEl.textContent = "0:00";
+    clockEl.title = "";
+    clockEl.classList.remove("live", "waiting", "landed", "failed");
+  }
+
   function updateClock() {
     if (!clockEl) return;
     if (recording) clockEl.textContent = fmtClock(Date.now() - recStart);
-    else if (!paused) clockEl.textContent = "0:00";
+    else if (commitTimerPhase === "idle" && !paused) clockEl.textContent = "0:00";
     clockEl.classList.toggle("live", recording);
   }
 
@@ -505,6 +555,7 @@
     mediaStream?.getTracks().forEach((t) => t.stop());
     clearInterval(anchorTimer);
     clearInterval(attentionTimer);
+    resetCommitTimer();
     clearTimeout(scrollPauseTimer);
     stopBridgeWatch();
     try { activePort?.disconnect(); } catch {}
@@ -544,10 +595,7 @@
     debugEl.innerHTML = "";
     setContextChips();
     lastTrailKey = "";
-    if (clockEl) {
-      clockEl.textContent = "0:00";
-      clockEl.classList.remove("live");
-    }
+    resetCommitTimer();
     closeMenu();
     sendBtn.disabled = false;
     sendBtn.textContent = "Dispatch →";
@@ -809,7 +857,7 @@
         const b = document.createElement("button");
         b.className = "vp-ready-recheck";
         b.textContent = "Recheck";
-        b.addEventListener("click", () => runPreflight());
+        b.addEventListener("click", () => runPreflight(true));
         foot.appendChild(b);
       }
       // Same Copy-diagnostic report (with the AI prompt) as every other error surface.
@@ -818,12 +866,14 @@
     }
   }
 
-  async function runPreflight() {
+  async function runPreflight(force = false) {
     setReadyBadge("checking", "Checking you can record & submit…");
     renderReadyPop(PREFLIGHT_STAGES.map((name) => ({ name, pending: true, detail: "checking…" })));
     let resp;
     try {
-      resp = await new Promise((resolve) => chrome.runtime.sendMessage({ type: "preflight" }, resolve));
+      resp = await new Promise((resolve) =>
+        chrome.runtime.sendMessage({ type: "preflight", force }, resolve)
+      );
     } catch (e) {
       resp = { ok: false, error: String(e) };
     }
@@ -1010,25 +1060,96 @@
   // ---------- context chip (via the background worker) ------------------------
   // The content script can't hit localhost directly (Chrome blocks the loopback
   // address space); the background service worker makes the bridge calls.
-  function warmAgent() {
-    ctxEl.innerHTML = chip("🎙 voice-pr", "brand") + chip("pre-warming agent…");
-    trace("warm.request", { pr: prUrl });
-    chrome.runtime.sendMessage({ type: "warm", prUrl, sessionId }, (res) => {
-      if (!res || !res.ok || res.json?.error) {
-        traceError("warm.failed", res?.json?.error || res?.error || "bridge not reachable");
-        ctxEl.innerHTML =
-          chip("🎙 voice-pr", "brand") +
-          chip(`bridge not reachable — is the server running on ${BRIDGE}?`, "vp-warn");
-        return;
+  function schedulePagePreparation() {
+    const start = () => preparePage();
+    if (typeof requestIdleCallback === "function")
+      requestIdleCallback(start, { timeout: 1000 });
+    else setTimeout(start, 250);
+  }
+
+  function preparePage() {
+    if (pagePreparationRequested) return;
+    pagePreparationRequested = true;
+    trace("prepare.request", { pr: prUrl, pageLoadedAt });
+    chrome.runtime.sendMessage(
+      { type: "prepare", prUrl, pageLoadedAt },
+      (res) => {
+        if (!res || !res.ok || res.json?.error) {
+          trace("prepare.failed", {
+            message: res?.json?.error || res?.error || "bridge not reachable",
+          });
+          return;
+        }
+        pagePreparation = res.json;
+        trace("prepare.done", {
+          state: pagePreparation.preparation?.state,
+          cacheHit: pagePreparation.preparation?.cacheHit,
+          contextCacheHit: pagePreparation.contextCacheHit,
+          pageLoadToPreparedMs:
+            pagePreparation.metrics?.pageLoadToPreparedMs,
+        });
       }
-      const c = res.json;
-      const bits = [chip("🎙 voice-pr", "brand"), chip(`PR #${c.pr.number}`), chip(c.pr.branch)];
-      if (c.jiraKey) bits.push(chip(`🎫 ${c.jiraKey}`, "tk"));
-      if (c.checksSummary) bits.push(chip(`✔︎ ${c.checksSummary}`, "ok"));
-      bits.push(chip("agent warming", "ok"));
+    );
+    // Prime the dependency probe while the page is idle. The background worker
+    // caches this response, so record-start normally renders it without I/O.
+    chrome.runtime.sendMessage({ type: "preflight" }, () => {});
+  }
+
+  function warmAgent() {
+    if (pagePreparation?.pr) {
+      const bits = [
+        chip("🎙 voice-pr", "brand"),
+        chip(`PR #${pagePreparation.pr.number}`),
+        chip(pagePreparation.pr.branch),
+      ];
+      if (pagePreparation.jiraKey)
+        bits.push(chip(`🎫 ${pagePreparation.jiraKey}`, "tk"));
+      bits.push(chip("repo prepared", "ok"));
       ctxEl.innerHTML = bits.join("");
-      trace("warm.accepted", { state: c.warm?.state, branch: c.pr.branch });
-    });
+    } else {
+      ctxEl.innerHTML =
+        chip("🎙 voice-pr", "brand") + chip("pre-warming agent…");
+    }
+    trace("warm.request", { pr: prUrl });
+    chrome.runtime.sendMessage(
+      {
+        type: "warm",
+        prUrl,
+        sessionId,
+        recordStartedAt: sessionStart,
+      },
+      (res) => {
+        if (!res || !res.ok || res.json?.error) {
+          traceError(
+            "warm.failed",
+            res?.json?.error || res?.error || "bridge not reachable"
+          );
+          ctxEl.innerHTML =
+            chip("🎙 voice-pr", "brand") +
+            chip(
+              `bridge not reachable — is the server running on ${BRIDGE}?`,
+              "vp-warn"
+            );
+          return;
+        }
+        const c = res.json;
+        const bits = [
+          chip("🎙 voice-pr", "brand"),
+          chip(`PR #${c.pr.number}`),
+          chip(c.pr.branch),
+        ];
+        if (c.jiraKey) bits.push(chip(`🎫 ${c.jiraKey}`, "tk"));
+        if (c.checksSummary)
+          bits.push(chip(`✔︎ ${c.checksSummary}`, "ok"));
+        bits.push(chip("agent warming", "ok"));
+        ctxEl.innerHTML = bits.join("");
+        trace("warm.accepted", {
+          state: c.warm?.state,
+          branch: c.pr.branch,
+          contextCacheHit: c.contextCacheHit,
+        });
+      }
+    );
   }
 
   // ---------- audio recording ------------------------------------------------
@@ -1173,6 +1294,13 @@
   // bundle stays saved and we offer a retry instead of silently dropping it.
   function sendBundle(bundle) {
     let gotResult = false;
+    if (
+      commitTimerPhase !== "landed" &&
+      commitTimerPhase !== "no-commit" &&
+      Number.isFinite(bundle.recordingStoppedAt)
+    ) {
+      startCommitTimer(bundle.recordingStoppedAt);
+    }
     try {
       const port = chrome.runtime.connect({ name: "dispatch" });
       activePort = port;
@@ -1275,7 +1403,7 @@
       "3. Given the codes seen this session, the failure is most likely in:",
       ...areasFor(codes).map((a) => `     - ${a}`),
       "4. The end-to-end flow, in order — walk it until a step's trace stops matching the happy path:",
-      "     extension/content.js (record + POST /api/warm → Dispatch click) → extension/background.js (relays to the bridge; content scripts can't hit localhost) → server.js POST /api/dispatch → lib/pipeline.js runSession → lib/agent.js (Cursor SDK + managed worktree) → lib/exec.js (gh/git/ffmpeg/whisper child processes; `exec.fail` records carry stderr — usually the smoking gun).",
+      "     extension/content.js (page-load POST /api/prepare → record + POST /api/warm → Dispatch click) → extension/background.js (relays to the bridge; content scripts can't hit localhost) → server.js /api/prepare or /api/dispatch → lib/pipeline.js → lib/agent.js (prepared worktree + Cursor SDK) → lib/exec.js (gh/git/ffmpeg/whisper child processes; `exec.fail` records carry stderr — usually the smoking gun).",
       "5. If nothing in the trail reached a `bridge.*` code, the bridge was never contacted — the fault is client-side (extension/content.js, extension/background.js) or the bridge is down (`npm run serve`).",
       "6. Report the root cause as code + file:line, then the minimal fix.",
       "=======================================",
@@ -1302,6 +1430,7 @@
 
   function offerRetry(bundle, why) {
     dispatched = false; // let the user try again without re-recording
+    finishCommitTimer("failed");
     traceError("dispatch.failed", why);
     const kb = Math.round(((bundle.audioB64?.length || 0) * 0.75) / 1024);
     line(
@@ -1333,6 +1462,7 @@
     if (dispatched) return;
     dispatched = true;
     const recordingStoppedAt = Date.now();
+    startCommitTimer(recordingStoppedAt);
     trace("dispatch.click", { typed: segments.length, timeline: timeline.length });
     // recording is over — clear the red indicator immediately (don't leave a
     // stuck "❚❚ Pause" button).
@@ -1371,7 +1501,7 @@
   const PIPELINE = [
     { id: "transcribe", idle: "Transcribe audio", doing: "Transcribing audio…" },
     { id: "comments", idle: "Detect comments", doing: "Listening for comments…" },
-    { id: "context", idle: "Use pre-warmed context", doing: "Connecting to warm context…" },
+    { id: "context", idle: "Finish agent pre-warm", doing: "Waiting for agent pre-warm…" },
     { id: "interpret", idle: "Interpret requests", doing: "Interpreting requests…" },
     { id: "work", idle: "Edit, validate & push", doing: "Agent editing and validating…" },
     { id: "trail", idle: "Post intent trail", doing: "Posting intent trail…" },
@@ -1428,6 +1558,7 @@
     if (stage === "agent-log") return;
     if (!pipe) return; // events are only meaningful once the pipeline is shown
     if (stage === "error") {
+      finishCommitTimer("failed");
       pipe.failActive(`Failed — ${d.message || "error"}`);
       return;
     }
@@ -1453,6 +1584,15 @@
       case "agent-starting":
         pipe.activate("context");
         break;
+      case "agent-warm-waiting":
+        pipe.note(
+          "context",
+          `Waiting for agent pre-warm · ${Math.max(
+            0,
+            Math.floor((d.elapsedMs || 0) / 1000)
+          )}s`
+        );
+        break;
       case "agent-ready":
         pipe.complete("context", d.warmWaitMs ? `Agent ready · waited ${(d.warmWaitMs / 1000).toFixed(1)}s` : "Agent ready");
         pipe.activate("interpret");
@@ -1468,6 +1608,7 @@
         pipe.note("work", `Pushing to ${d.branch || "PR branch"}…`);
         break;
       case "agent-finished":
+        finishCommitTimer(d.commits ? "landed" : "no-commit");
         pipe.complete("work", d.commits ? `Pushed ${plural(d.commits, "commit")}` : "Review complete");
         if (d.commits) pipe.activate("trail");
         else pipe.complete("trail", "No intent trail needed");
@@ -1488,6 +1629,11 @@
 
   function done(r) {
     const ok = r.status === "done";
+    const latency = r.metrics?.stopToPatchMs;
+    finishCommitTimer(
+      ok && r.commits?.length ? "landed" : ok ? "no-commit" : "failed",
+      Number.isFinite(latency) ? latency : null
+    );
     if (pipe) {
       if (ok) pipe.completeRemaining();
       else pipe.failActive(`${r.status === "failed" ? "Failed" : "Incomplete"}`);
@@ -1500,7 +1646,6 @@
     box.appendChild(head);
     const sub = document.createElement("div");
     sub.className = "sub";
-    const latency = r.metrics?.stopToPatchMs;
     sub.textContent =
       `agent ${r.agentId || "—"}` +
       (Number.isFinite(latency) ? ` · stop → patch ${(latency / 1000).toFixed(1)}s` : "");
@@ -1541,6 +1686,7 @@
   // idle we leave the quiet pill; its badge (and the toolbar badge) still
   // reflect work in flight on other PRs.
   function initSurface() {
+    schedulePagePreparation();
     loadFleet((jobs) => {
       updatePillBadge(jobs);
       const job = jobs[prUrl] || null;

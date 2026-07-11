@@ -3,7 +3,13 @@ import test from "node:test";
 import { installFakeCli } from "./helpers/fake-cli.js";
 
 const fake = installFakeCli(["gh"]);
-const { runSession, getContext, resolvePr, warmSession } = await import("../lib/pipeline.js");
+const {
+  runSession,
+  getContext,
+  preparePr,
+  resolvePr,
+  warmSession,
+} = await import("../lib/pipeline.js");
 const PR_URL = "https://github.com/o/r/pull/7";
 const SEGMENTS = [{ text: "this retry needs backoff", file: "lib/net.js", line: 12 }];
 
@@ -36,6 +42,15 @@ function fakeRuntime(overrides = {}) {
   const calls = [];
   return {
     calls,
+    async preparePr(input) {
+      calls.push({ kind: "prepare", input });
+      return {
+        key: `${input.pr.owner}/${input.pr.repo}#${input.pr.number}@${input.pr.headRefOid}`,
+        state: "ready",
+        cacheHit: false,
+        preparationMs: 12,
+      };
+    },
     warm(input) {
       calls.push({ kind: "warm", input });
       return { sessionId: input.sessionId, state: "warming", startedAt: 1 };
@@ -90,6 +105,42 @@ test("getContext surfaces PR, Jira, checks, and head SHA", async () => {
   assert.equal(context.pr.headSha, "a".repeat(40));
   assert.equal(context.jiraKey, "ABC-123");
   assert.equal(context.checksSummary, "1 checks, 0 failing");
+});
+
+test("preparePr caches context and performs only deterministic runtime setup", async () => {
+  world({ meta: { title: "ABC-123 add retry" } });
+  const runtime = fakeRuntime();
+  const trace = record();
+  const result = await preparePr(
+    {
+      prRef: "https://github.com/o/r/pull/71",
+      runtime,
+    },
+    trace.emit
+  );
+  assert.equal(result.preparation.state, "ready");
+  assert.equal(result.pr.headSha, "a".repeat(40));
+  assert.equal(runtime.calls.length, 1);
+  assert.equal(runtime.calls[0].kind, "prepare");
+  assertSubsequence(trace.stages(), [
+    "context-cache-miss",
+    "context-cache-stored",
+  ]);
+
+  const cliCallsAfterPrepare = fake.calls().length;
+  const warmTrace = record();
+  const warm = await warmSession(
+    {
+      sessionId: "prepared-71",
+      prRef: "https://github.com/o/r/pull/71",
+      runtime,
+    },
+    warmTrace.emit
+  );
+  assert.equal(warm.contextCacheHit, true);
+  assert.equal(fake.calls().length, cliCallsAfterPrepare);
+  assert.equal(runtime.calls[1].kind, "warm");
+  assert.ok(warmTrace.stages().includes("context-cache-hit"));
 });
 
 test("warmSession starts the durable agent during recording and returns context", async () => {

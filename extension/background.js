@@ -22,15 +22,37 @@
 const BRIDGE = "http://localhost:4100";
 const JOBS_KEY = "voicepr:jobs";
 const JOBS_CAP = 40; // distinct PRs kept in the registry; oldest terminal ones drop
+const PREFLIGHT_TTL_MS = 60_000;
+let preflightCache = null;
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // Passive page-load preparation: deterministic context + git workspace only.
+  // The bridge does not create or message a Cursor agent on this endpoint.
+  if (msg?.type === "prepare") {
+    fetch(`${BRIDGE}/api/prepare`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        prRef: msg.prUrl,
+        pageLoadedAt: msg.pageLoadedAt,
+      }),
+    })
+      .then((r) => r.json())
+      .then((json) => sendResponse({ ok: !json.error, json }))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
   // Record-start pre-warm. The bridge returns PR context as soon as it has
   // launched the workspace + agent analysis in the background.
   if (msg?.type === "warm") {
     fetch(`${BRIDGE}/api/warm`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prRef: msg.prUrl, sessionId: msg.sessionId }),
+      body: JSON.stringify({
+        prRef: msg.prUrl,
+        sessionId: msg.sessionId,
+        recordStartedAt: msg.recordStartedAt,
+      }),
     })
       .then((r) => r.json())
       .then((json) => sendResponse({ ok: !json.error, json }))
@@ -47,9 +69,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   // end-to-end preflight (debug panel) — probe every dispatch dependency
   if (msg?.type === "preflight") {
-    fetch(`${BRIDGE}/api/preflight`)
-      .then((r) => r.json())
-      .then((json) => sendResponse({ ok: true, json }))
+    getPreflight(!!msg.force)
+      .then((json) => sendResponse({ ok: !json.error, json }))
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
@@ -90,6 +111,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 });
+
+async function getPreflight(force = false) {
+  if (
+    !force &&
+    preflightCache &&
+    Date.now() - preflightCache.at < PREFLIGHT_TTL_MS
+  ) {
+    return preflightCache.value;
+  }
+  const response = await fetch(`${BRIDGE}/api/preflight`);
+  const value = await response.json();
+  if (!value.error) preflightCache = { at: Date.now(), value };
+  return value;
+}
 
 // ---------- central job registry -------------------------------------------
 // One write path, serialized so concurrent dispatches don't clobber the map.
@@ -220,6 +255,7 @@ function patchForEvent(ev) {
     case "pr-loaded": return { status: "running", label: "Loaded PR", branch: d.branch ?? null };
     case "context": return { status: "running", label: "Context ready" };
     case "agent-starting": return { status: "running", label: "Connecting to warm agent…" };
+    case "agent-warm-waiting": return { status: "running", label: `Waiting for agent pre-warm · ${Math.max(0, Math.floor((d.elapsedMs || 0) / 1000))}s` };
     case "agent-ready": return { status: "running", label: d.warmWaitMs ? `Agent ready · waited ${(d.warmWaitMs / 1000).toFixed(1)}s` : "Agent ready" };
     case "interpreting": return { status: "running", label: "Interpreting requests…" };
     case "agent-running": return { status: "running", label: "Agent editing and validating…", agentId: d.agentId ?? null, runId: d.runId ?? null };

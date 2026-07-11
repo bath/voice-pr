@@ -3,7 +3,12 @@
 // fetch localhost directly, so the extension's background worker proxies to
 // these endpoints, which pre-warm a Cursor agent and transcribe locally.
 import { createServer } from "node:http";
-import { runSession, getContext, warmSession } from "./lib/pipeline.js";
+import {
+  runSession,
+  getContext,
+  preparePr,
+  warmSession,
+} from "./lib/pipeline.js";
 import { transcribe, anchorSegments, checkStt } from "./lib/transcribe.js";
 import { agentRuntime } from "./lib/agent.js";
 import { run } from "./lib/exec.js";
@@ -40,6 +45,8 @@ const server = createServer(async (req, res) => {
       return await handleContext(url, res);
     if (req.method === "GET" && url.pathname === "/api/preflight")
       return await handlePreflight(res);
+    if (req.method === "POST" && url.pathname === "/api/prepare")
+      return await handlePrepare(req, res);
     if (req.method === "POST" && url.pathname === "/api/warm")
       return await handleWarm(req, res);
     if (req.method === "POST" && url.pathname === "/api/transcribe")
@@ -178,14 +185,14 @@ async function handleDispatch(req, res) {
 // the background while the user records.
 async function handleWarm(req, res) {
   const body = await readBody(req);
-  const { prRef, sessionId } = JSON.parse(body || "{}");
+  const { prRef, sessionId, recordStartedAt = null } = JSON.parse(body || "{}");
   const sid = sessionId || `warm-${Date.now()}`;
   return withTracer(sid, { prRef }, async (tracer) => {
     try {
       await tracer.markLatest({ prRef, kind: "warm" });
       tracer.event("bridge.warm.start", { prRef });
       const context = await warmSession(
-        { sessionId: sid, prRef },
+        { sessionId: sid, prRef, recordStartedAt },
         (stage, detail) => tracer.event(stage, detail || {})
       );
       tracer.event("bridge.warm.accepted", {
@@ -196,6 +203,46 @@ async function handleWarm(req, res) {
       res.end(JSON.stringify(context));
     } catch (e) {
       const rec = tracer.error("bridge.warm.error", e);
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: e.message, code: rec.code, loc: rec.loc }));
+    }
+  });
+}
+
+// Passive PR-page hot path. Every operation here is deterministic: resolve and
+// cache PR context, clone/fetch the mirror, and prepare a reusable worktree. No
+// Cursor agent is created and no inference runs until explicit Record.
+async function handlePrepare(req, res) {
+  const receivedAt = Date.now();
+  const body = await readBody(req);
+  const { prRef, pageLoadedAt = null } = JSON.parse(body || "{}");
+  const sid = `prepare-${Date.now()}`;
+  return withTracer(sid, { prRef }, async (tracer) => {
+    try {
+      tracer.event("bridge.prepare.start", { prRef, pageLoadedAt });
+      const prepared = await preparePr(
+        { prRef },
+        (stage, detail) => tracer.event(stage, detail || {})
+      );
+      prepared.metrics = {
+        ...(prepared.metrics || {}),
+        prepareReceivedAt: receivedAt,
+        pageLoadToPreparedMs:
+          Number.isFinite(pageLoadedAt) && prepared.metrics?.preparedAt
+            ? prepared.metrics.preparedAt - pageLoadedAt
+            : null,
+      };
+      tracer.event("bridge.prepare.done", {
+        pr: prepared.pr.number,
+        state: prepared.preparation.state,
+        cacheHit: prepared.preparation.cacheHit,
+        contextCacheHit: prepared.contextCacheHit,
+        pageLoadToPreparedMs: prepared.metrics.pageLoadToPreparedMs,
+      });
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(prepared));
+    } catch (e) {
+      const rec = tracer.error("bridge.prepare.error", e);
       res.writeHead(400, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: e.message, code: rec.code, loc: rec.loc }));
     }
@@ -276,7 +323,10 @@ async function handleContext(url, res) {
   return withTracer(`context-${Date.now()}`, { prRef }, async (tracer) => {
     try {
       tracer.event("bridge.context.start", { prRef });
-      const ctx = await getContext(prRef);
+      const ctx = await getContext(
+        prRef,
+        (stage, detail) => tracer.event(stage, detail || {})
+      );
       tracer.event("bridge.context.done", { pr: ctx?.pr?.number, jiraKey: ctx?.jiraKey });
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(ctx));
