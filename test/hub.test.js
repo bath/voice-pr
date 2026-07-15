@@ -159,6 +159,26 @@ test("done card exposes the trail link + dismiss; failed card exposes retry", as
   assert.equal(failHub.byAction("retry").length, 1);
 });
 
+test("done card surfaces only the compact Action summary", async () => {
+  const { renderHub } = await loadHub();
+  const hub = renderHub(fakeDoc, {
+    thisPr: { prUrl: "p", prNumber: 7 },
+    decision: {
+      state: "done",
+      job: {
+        status: "done",
+        prUrl: "p",
+        summary: "Pushed one commit",
+        actionSummary: { totalActions: 3, blockedEffects: 1 },
+      },
+    },
+    fleet: [],
+  });
+  const summaries = hub.all((node) => (node._class || "").includes("vp-action-summary"));
+  assert.equal(summaries.length, 1);
+  assert.equal(summaries[0].textContent, "3 actions · 1 needs permission");
+});
+
 test("terminal fleet rows carry a ✕ clear; active rows do not", async () => {
   const { renderHub } = await loadHub();
   const fleet = [

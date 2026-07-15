@@ -60,13 +60,17 @@ function fakeRuntime(overrides = {}) {
       input.emit("agent-ready", { agentId: "agent-1", warmWaitMs: 0 });
       input.emit("interpreting", { segments: input.segments.length });
       input.emit("agent-running", { agentId: "agent-1", runId: "run-1" });
-      input.emit("agent-finished", { commits: 1, executionMs: 12 });
+      input.emit("actions-compiled", { totalActions: 1, authorizedEffects: 5, blockedEffects: 0 });
+      input.emit("agent-finished", { commits: 1, published: true, actions: 1, executionMs: 12 });
       return {
         backend: "cursor-sdk",
         status: "done",
         agentId: "agent-1",
         runId: "run-1",
         commits: [{ oid: "deadbeefcafe0001", messageHeadline: "add retry backoff" }],
+        published: true,
+        mayPostIntentTrail: true,
+        actionSummary: { totalActions: 1, authorizedEffects: 5, blockedEffects: 0 },
         metrics: { patchReadyAt: 20, executionMs: 12 },
         ...overrides.result,
       };
@@ -208,6 +212,7 @@ test("runSession executes on the warm runtime and posts a commit trail asynchron
   assert.equal(result.trailCommentPending, true);
   assert.equal(runtime.calls[0].kind, "execute");
   assert.equal(runtime.calls[0].input.segments, SEGMENTS);
+  assert.equal(runtime.calls[0].input.autonomyLevel, "current_pr");
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.ok(
     fake.calls().some((call) => String(call.args).includes("issues/7/comments"))
@@ -233,6 +238,7 @@ test("runSession emits the minimal hot-path stage order", async () => {
     "agent-ready",
     "interpreting",
     "agent-running",
+    "actions-compiled",
     "agent-finished",
     "comment-queued",
   ]);
@@ -252,6 +258,32 @@ test("no confident commit completes without posting an intent trail", async () =
   assert.equal(result.trailCommentUrl, null);
   assert.equal(result.trailCommentPending, false);
   assert.match(result.summary, /without making a confident code change/);
+  assert.ok(!trace.stages().includes("comment-queued"));
+});
+
+test("local-only outcomes never publish or post the intent trail", async () => {
+  world();
+  const runtime = fakeRuntime({
+    result: {
+      published: false,
+      mayPostIntentTrail: false,
+      actionSummary: { totalActions: 1, authorizedEffects: 3, blockedEffects: 2 },
+    },
+  });
+  const trace = record();
+  const result = await runSession(
+    {
+      sessionId: "local-session",
+      prRef: PR_URL,
+      segments: SEGMENTS,
+      autonomyLevel: "local_workspace",
+      runtime,
+    },
+    trace.emit
+  );
+  assert.equal(runtime.calls[0].input.autonomyLevel, "local_workspace");
+  assert.equal(result.trailCommentPending, false);
+  assert.match(result.summary, /Prepared 1 voice-driven commit locally/);
   assert.ok(!trace.stages().includes("comment-queued"));
 });
 

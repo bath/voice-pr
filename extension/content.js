@@ -304,6 +304,19 @@
         </div>
       </header>
       <div id="vp-context" class="vp-context"></div>
+      <div class="vp-scope-bar">
+        <label class="vp-scope-control" for="vp-autonomy">
+          <span class="vp-scope-label">Scope</span>
+          <select id="vp-autonomy" aria-describedby="vp-scope-note">
+            <option value="read_only">Read only</option>
+            <option value="local_workspace">Local workspace</option>
+            <option value="current_pr">This pull request</option>
+            <option value="current_repo">This repository · this session</option>
+            <option value="connected_services">Connected services · this session</option>
+          </select>
+        </label>
+        <span id="vp-scope-note" class="vp-scope-note">For this session only</span>
+      </div>
       <div class="vp-body">
         <div id="vp-looking" class="vp-looking vp-now" aria-live="polite"></div>
         <div id="vp-status" class="vp-log" role="log" aria-live="polite"></div>
@@ -366,6 +379,8 @@
     clockEl = $("#vp-clock"),
     menuBtn = $("#vp-menu-btn"),
     menuEl = $("#vp-menu"),
+    autonomySelect = $("#vp-autonomy"),
+    scopeNote = $("#vp-scope-note"),
     readyBtn = $("#vp-ready-btn"),
     readyPop = $("#vp-ready-pop"),
     statusEl = $("#vp-status"),
@@ -375,6 +390,20 @@
     hudFeedEl = $("#vp-hud-feed"),
     hudTopEl = $("#vp-hud-topn");
 
+  const authorization = window.VoicePrAuthorization.createAuthorizationController();
+  autonomySelect.value = authorization.value;
+  function setAuthorization(level) {
+    try { authorization.set(level); }
+    catch { authorization.set("current_pr"); }
+    autonomySelect.value = authorization.value;
+    scopeNote.textContent = authorization.isBroad
+      ? "Broader access · this session only"
+      : "For this session only";
+  }
+  autonomySelect.addEventListener("change", () => {
+    setAuthorization(autonomySelect.value);
+    setContextChips();
+  });
   // ---------- overflow menu (holds dev + gaze) --------------------------------
   function closeMenu() {
     menuEl.hidden = true;
@@ -400,7 +429,9 @@
   const chip = (text, cls = "") =>
     `<span class="vp-chip${cls ? " " + cls : ""}">${escapeHtml(text)}</span>`;
   function setContextChips() {
-    ctxEl.innerHTML = chip("🎙 voice-pr", "brand") + chip(`PR #${m[3]}`);
+    ctxEl.innerHTML =
+      chip("🎙 voice-pr", "brand") +
+      chip(`PR #${m[3]}`);
   }
 
   // ---------- control-bar clock ----------------------------------------------
@@ -428,6 +459,9 @@
     } else if (commitTimerPhase === "no-commit") {
       clockEl.textContent = `no commit · ${elapsed}`;
       clockEl.title = `Agent completed without a commit after ${elapsed}`;
+    } else if (commitTimerPhase === "local") {
+      clockEl.textContent = `local commit · ${elapsed}`;
+      clockEl.title = `Commit prepared locally after ${elapsed}; it was not published`;
     } else {
       clockEl.textContent = `failed · ${elapsed}`;
       clockEl.title = `Dispatch failed after ${elapsed}`;
@@ -586,7 +620,8 @@
     gazeDot.style.display = "none";
     renderHud();
   }
-  function resetUI() {
+  function resetUI(authorizationLevel = "current_pr") {
+    setAuthorization(authorizationLevel);
     statusEl.innerHTML = "";
     pipe = null;
     setReadyBadge("checking", "Checking you can record & submit…");
@@ -623,9 +658,8 @@
     pillBadge.textContent = n ? String(n) : "";
   }
 
-  // `animate` gates the staggered entrance: true on a fresh open, false on the
-  // live re-renders driven by registry changes (a running job ticking would
-  // otherwise re-slam the whole list into view on every update).
+  // `animate` gates the one-shot calm entrance: true on a fresh open, false on
+  // live re-renders driven by registry changes.
   function renderHubViewWith(jobs, animate) {
     fleetJobs = jobs || {};
     const job = fleetJobs[prUrl] || null;
@@ -718,6 +752,7 @@
       dispatched = true;
       trace("recover.resend", {});
       enterDispatchView();
+      setAuthorization(pending.autonomyLevel);
       line("resending recovered recording…");
       sendBundle(pending);
     });
@@ -1043,6 +1078,9 @@
     devBtn.classList.toggle("on", devOn);
     gazeBtn.hidden = !devOn;
     debugEl.hidden = !devOn;
+    root.querySelectorAll("[data-vp-dev-detail]").forEach((node) => {
+      node.hidden = !devOn;
+    });
     if (!devOn) {
       laser.style.display = "none";
       if (gazeOn) stopGaze();
@@ -1481,66 +1519,91 @@
     sendBtn.disabled = true;
     sendBtn.textContent = "Sent ✓";
     pipe = renderPipeline();
-    logRow(
-      "You can close this tab — transcription + the warm agent run on the server; your recording is saved locally until it confirms.",
-      { cls: "reassure" }
-    );
     const audio = await stopAndGetAudio();
-    const bundle = { prRef: prUrl, sessionId, recordingStoppedAt, typedSegments: segments, timeline, audioStartMs, ...(audio || {}) };
+    const bundle = {
+      prRef: prUrl,
+      sessionId,
+      recordingStoppedAt,
+      autonomyLevel: authorization.value,
+      typedSegments: segments,
+      timeline,
+      audioStartMs,
+      ...(audio || {}),
+    };
     savePending(bundle); // durable BEFORE the first network attempt
     sendBundle(bundle);
   });
 
-  // ---------- dispatch pipeline: a FIXED checklist, defined once --------------
-  // The steps from "stop recording" to "patch ready" are known
-  // up front, so we render them all at dispatch time and flip each pending →
-  // active → done in place as events arrive. Nothing appends, the panel never
-  // grows or scrolls mid-run, and unexpected events are ignored rather than
-  // dumped into the UI. Dynamic values (heard N, branch, work id) fill the
-  // step's label on completion.
+  // ---------- dispatch: one calm phase surface -------------------------------
+  // Streamed events still arrive at full fidelity, but the default UI shows the
+  // user's current phase rather than six machine-oriented checklist rows. The
+  // developer view retains a quiet event trail for diagnosis.
   const PIPELINE = [
-    { id: "transcribe", idle: "Transcribe audio", doing: "Transcribing audio…" },
-    { id: "comments", idle: "Detect comments", doing: "Listening for comments…" },
-    { id: "context", idle: "Connect prepared agent", doing: "Connecting prepared agent…" },
-    { id: "interpret", idle: "Interpret requests", doing: "Interpreting requests…" },
-    { id: "work", idle: "Edit, validate & push", doing: "Agent editing and validating…" },
-    { id: "trail", idle: "Post intent trail", doing: "Posting intent trail…" },
+    { id: "transcribe", phase: "Preparing", doing: "Listening back to your review…" },
+    { id: "comments", phase: "Preparing", doing: "Finding the changes you asked for…" },
+    { id: "context", phase: "Preparing", doing: "Getting the pull request ready…" },
+    { id: "interpret", phase: "Compiling", doing: "Turning feedback into a plan…" },
+    { id: "work", phase: "Applying", doing: "Making and validating the changes…" },
+    { id: "trail", phase: "Applying", doing: "Finishing the pull request update…" },
   ];
   let pipe = null; // active pipeline controller (null until dispatch)
+  let blockedEffect = null;
   function renderPipeline() {
+    blockedEffect = null;
     statusEl.innerHTML = "";
     const wrap = document.createElement("div");
-    wrap.className = "vp-pipeline";
-    const rows = new Map();
-    for (const s of PIPELINE) {
-      const row = document.createElement("div");
-      row.className = "vp-step pending";
-      row.innerHTML = `<span class="vp-step-mark"></span><span class="vp-step-label"></span>`;
-      row.querySelector(".vp-step-label").textContent = s.idle;
-      wrap.appendChild(row);
-      rows.set(s.id, row);
-    }
+    wrap.className = "vp-phase working";
+    wrap.setAttribute("role", "status");
+    wrap.innerHTML = `
+      <span class="vp-phase-spinner" aria-hidden="true"></span>
+      <div class="vp-phase-copy">
+        <div class="vp-phase-name">Preparing</div>
+        <div class="vp-phase-title">Saving your recording…</div>
+        <div class="vp-phase-detail">You can close this tab. Your recording stays local until the run confirms.</div>
+      </div>
+      <div class="vp-phase-telemetry" data-vp-dev-detail hidden></div>`;
     statusEl.appendChild(wrap);
-    let activeId = null;
+    const phaseName = wrap.querySelector(".vp-phase-name");
+    const phaseTitle = wrap.querySelector(".vp-phase-title");
+    const phaseDetail = wrap.querySelector(".vp-phase-detail");
+    const telemetry = wrap.querySelector(".vp-phase-telemetry");
+    telemetry.hidden = !devOn;
+    let activeId = "transcribe";
+    let isBlocked = false;
     const set = (id, state, text) => {
-      const row = rows.get(id);
-      if (!row) return;
-      row.className = `vp-step ${state}`;
-      if (text != null) row.querySelector(".vp-step-label").textContent = text;
-      if (state === "active") activeId = id;
+      const config = PIPELINE.find((item) => item.id === id);
+      if (!config || isBlocked) return;
+      if (state === "active") {
+        activeId = id;
+        phaseName.textContent = config.phase;
+        phaseTitle.textContent = text || config.doing;
+      }
+      const event = document.createElement("div");
+      event.textContent = `${state === "done" ? "✓" : "→"} ${text || config.doing}`;
+      telemetry.appendChild(event);
     };
-    const labelOf = (id) => PIPELINE.find((p) => p.id === id) || {};
     return {
-      activate: (id, text) => set(id, "active", text ?? labelOf(id).doing),
-      complete: (id, text) => set(id, "done", text ?? labelOf(id).idle),
+      activate: (id, text) => set(id, "active", text),
+      complete: (id, text) => set(id, "done", text),
       note: (id, text) => set(id, "active", text), // keep active, update label
-      failActive: (text) => activeId && set(activeId, "fail", text),
-      completeRemaining: () =>
-        PIPELINE.forEach((s) => {
-          const r = rows.get(s.id);
-          if (r && !r.classList.contains("done")) set(s.id, "done", labelOf(s.id).idle);
-        }),
-      has: (id) => rows.has(id),
+      failActive: (text) => {
+        isBlocked = true;
+        wrap.className = "vp-phase blocked";
+        phaseName.textContent = "Needs attention";
+        phaseTitle.textContent = text;
+        phaseDetail.textContent = "Your recording is saved locally. Retry when the problem is resolved.";
+      },
+      block: (effect, next) => {
+        isBlocked = true;
+        blockedEffect = effect;
+        wrap.className = "vp-phase blocked";
+        phaseName.textContent = "Permission needed";
+        phaseTitle.textContent = `${effect} was not authorized`;
+        phaseDetail.textContent = `Your completed work remains local. ${next}`;
+      },
+      completeRemaining: () => {},
+      has: (id) => PIPELINE.some((item) => item.id === id),
+      get activeId() { return activeId; },
     };
   }
   const plural = (n, w) => `${n} ${w}${Number(n) === 1 ? "" : "s"}`;
@@ -1601,16 +1664,32 @@
         pipe.activate("interpret");
         break;
       case "agent-running":
-        pipe.complete("interpret");
+        pipe.note("interpret", "Compiling actions…");
+        break;
+      case "actions-compiled":
+        pipe.complete(
+          "interpret",
+          `${plural(d.totalActions ?? 0, "action")} · ${d.blockedEffects ? `${d.blockedEffects} ${d.blockedEffects === 1 ? "needs" : "need"} permission` : "authorized"}`
+        );
         pipe.activate("work");
         break;
       case "agent-pushing":
         pipe.note("work", `Pushing to ${d.branch || "PR branch"}…`);
         break;
+      case "agent-push-blocked":
+        pipe.block("Push this pull request", "Start a new session with “This pull request” scope to publish it.");
+        break;
       case "agent-finished":
-        finishCommitTimer(d.commits ? "landed" : "no-commit");
-        pipe.complete("work", d.commits ? `Pushed ${plural(d.commits, "commit")}` : "Review complete");
-        if (d.commits) pipe.activate("trail", "Posting intent trail…");
+        finishCommitTimer(d.commits ? (d.published ? "landed" : "local") : "no-commit");
+        pipe.complete(
+          "work",
+          d.commits
+            ? d.published
+              ? `Pushed ${plural(d.commits, "commit")}`
+              : `Prepared ${plural(d.commits, "commit")} locally`
+            : "Review complete"
+        );
+        if (d.commits && d.published) pipe.activate("trail", "Posting intent trail…");
         else pipe.complete("trail", "No intent trail needed");
         break;
       case "comment-queued":
@@ -1623,8 +1702,8 @@
       case "branch-queued":
         pipe.note("context", `Queued behind an earlier run${d.position ? ` · position ${d.position}` : ""}…`);
         break;
-      // re-signaled and anything else: ignored — the fixed checklist doesn't
-      // react to every event.
+      // Re-signaled and internal-only events are ignored by the calm surface;
+      // the structured trace still retains them for developer diagnosis.
       default:
         break;
     }
@@ -1632,20 +1711,25 @@
 
   function done(r) {
     const ok = r.status === "done";
+    const receipt = window.VoicePrReceipt.deriveReceipt(r, blockedEffect);
     const latency = r.metrics?.stopToPatchMs;
     finishCommitTimer(
-      ok && r.commits?.length ? "landed" : ok ? "no-commit" : "failed",
+      ok && r.commits?.length
+        ? (receipt.published ? "landed" : "local")
+        : ok ? "no-commit" : "failed",
       Number.isFinite(latency) ? latency : null
     );
     if (pipe) {
       if (ok) pipe.completeRemaining();
       else pipe.failActive(`${r.status === "failed" ? "Failed" : "Incomplete"}`);
     }
+    statusEl.innerHTML = ""; // the receipt replaces the working phase
+    const successfulOutcome = ok && (!receipt.permissionBlocked || receipt.published);
     const box = document.createElement("div");
-    box.className = `vp-result ${ok ? "ok" : "warn"}`;
+    box.className = `vp-result ${successfulOutcome ? "ok" : "warn"}`;
     const head = document.createElement("div");
     head.className = "headline";
-    head.textContent = `${ok ? "✅" : r.status === "failed" ? "⚠️" : "⏳"} ${r.summary}`;
+    head.textContent = `${successfulOutcome ? "✓" : "!"} ${r.summary}`;
     box.appendChild(head);
     const sub = document.createElement("div");
     sub.className = "sub";
@@ -1653,6 +1737,38 @@
       `agent ${r.agentId || "—"}` +
       (Number.isFinite(latency) ? ` · stop → patch ${(latency / 1000).toFixed(1)}s` : "");
     box.appendChild(sub);
+    if (receipt.permissionBlocked) {
+      const exception = document.createElement("div");
+      exception.className = "vp-result-exception";
+      exception.innerHTML = `<strong></strong><span></span>`;
+      exception.querySelector("strong").textContent = `${receipt.effectLabel} ${receipt.blockedCount === 1 ? "was" : "were"} not authorized.`;
+      exception.querySelector("span").textContent = receipt.retentionText;
+      box.appendChild(exception);
+      if (receipt.nextScope) {
+        const authorize = document.createElement("button");
+        authorize.className = "vp-send";
+        authorize.textContent = receipt.nextLabel;
+        authorize.addEventListener("click", () => {
+          setAuthorization(receipt.nextScope);
+          authorize.textContent = "Scope selected ✓";
+          authorize.disabled = true;
+        });
+        box.appendChild(authorize);
+      }
+    }
+    if (r.actionSummary) {
+      const actionSub = document.createElement("div");
+      actionSub.className = "sub vp-action-summary vp-dev-detail";
+      actionSub.hidden = !devOn;
+      actionSub.setAttribute("data-vp-dev-detail", "");
+      actionSub.textContent =
+        `${plural(r.actionSummary.totalActions ?? 0, "action")} · ` +
+        `${r.actionSummary.authorizedEffects ?? 0} effects authorized` +
+        (r.actionSummary.blockedEffects
+          ? ` · ${r.actionSummary.blockedEffects} ${r.actionSummary.blockedEffects === 1 ? "needs" : "need"} permission`
+          : "");
+      box.appendChild(actionSub);
+    }
     if (r.trailCommentUrl) {
       const a = document.createElement("a");
       a.className = "vp-link";
@@ -1662,11 +1778,13 @@
       a.textContent = "see the comment on the PR →";
       box.appendChild(a);
     }
-    const reload = document.createElement("button");
-    reload.className = "vp-send";
-    reload.textContent = "Refresh PR to see commits";
-    reload.addEventListener("click", () => location.reload());
-    box.appendChild(reload);
+    if (!receipt.permissionBlocked || receipt.canRefresh) {
+      const reload = document.createElement("button");
+      reload.className = "vp-send";
+      reload.textContent = "Refresh PR to see commits";
+      reload.addEventListener("click", () => location.reload());
+      box.appendChild(reload);
+    }
     clearEmpty();
     statusEl.appendChild(box);
     statusEl.scrollTop = statusEl.scrollHeight;

@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>voice-pr · Control plane reimagined</title>
+  <!--
+    THROWAWAY PROTOTYPE — four structurally different answers to “what is the
+    voice-pr control plane?”, switchable with ?variant=A|B|C|D.
+  -->
+  <style>
+    :root {
+      --ink: #f4f4f2;
+      --ink-2: #c7c8c5;
+      --ink-3: #8d908b;
+      --void: #080a09;
+      --surface: #101311;
+      --surface-2: #171a18;
+      --surface-3: #202421;
+      --line: #2a2e2b;
+      --line-strong: #3a403c;
+      --lime: #b9f27c;
+      --lime-soft: rgba(185, 242, 124, .12);
+      --blue: #8fbdff;
+      --blue-soft: rgba(107, 164, 255, .12);
+      --amber: #f4bd6f;
+      --red: #ff8a7a;
+      --purple: #c4a7ff;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      --ease: cubic-bezier(.2, .8, .2, 1);
+      --shadow: 0 24px 80px rgba(0,0,0,.38);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--void); }
+    body { margin: 0; min-height: 100vh; color: var(--ink); background: var(--void); font-family: var(--sans); }
+    button, input, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+    button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+    .mono { font-family: var(--mono); }
+    .muted { color: var(--ink-3); }
+    .good { color: var(--lime); }
+    .warn { color: var(--amber); }
+    .bad { color: var(--red); }
+
+    .prototype-flag {
+      position: fixed; z-index: 100; top: 18px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 8px;
+      border: 1px solid rgba(255,255,255,.11); border-radius: 999px;
+      color: #ddd; background: rgba(10,12,11,.78); box-shadow: 0 10px 30px rgba(0,0,0,.22);
+      backdrop-filter: blur(16px); font: 600 10px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase;
+    }
+    .prototype-flag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 4px rgba(244,189,111,.1); }
+
+    .variant { display: none; min-height: 100vh; animation: appear 220ms var(--ease); }
+    .variant.active { display: block; }
+    @keyframes appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+    .variant-switcher {
+      position: fixed; z-index: 120; left: 50%; bottom: 18px; transform: translateX(-50%);
+      width: min(560px, calc(100vw - 24px)); display: grid; grid-template-columns: 42px 1fr 42px;
+      align-items: center; gap: 5px; padding: 6px;
+      background: rgba(238,239,235,.96); border: 1px solid rgba(255,255,255,.35); border-radius: 16px;
+      color: #111412; box-shadow: 0 18px 50px rgba(0,0,0,.45); backdrop-filter: blur(20px);
+    }
+    .switch-arrow { border: 0; height: 38px; border-radius: 11px; background: transparent; cursor: pointer; font-size: 18px; transition: background 160ms var(--ease), transform 160ms var(--ease); }
+    .switch-arrow:hover { background: rgba(0,0,0,.07); }
+    .switch-arrow:active { transform: scale(.94); }
+    .switch-current { min-width: 0; text-align: center; }
+    .switch-current strong { display: block; font-size: 12px; line-height: 1.3; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .switch-current span { display: block; margin-top: 2px; color: #5e625f; font: 9px/1.2 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+
+    .concept-kicker { color: var(--lime); font: 700 10px/1.2 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+    .concept-title { margin: 12px 0 10px; font-size: clamp(33px, 5vw, 68px); line-height: .96; letter-spacing: -.06em; font-weight: 600; }
+    .concept-deck { max-width: 670px; margin: 0; color: var(--ink-2); font-size: 15px; line-height: 1.65; }
+    .tiny-label { font: 650 9px/1.2 var(--mono); color: var(--ink-3); text-transform: uppercase; letter-spacing: .1em; }
+    .state-readout { font: 10px/1.4 var(--mono); color: var(--ink-3); }
+    .state-readout b { color: var(--ink-2); font-weight: 500; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink-2); font: 10px/1 var(--mono); white-space: nowrap; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); }
+    .dot.good { background: var(--lime); box-shadow: 0 0 0 4px var(--lime-soft); }
+    .dot.work { background: var(--blue); box-shadow: 0 0 0 4px var(--blue-soft); animation: breathe 1.5s ease-in-out infinite; }
+    .dot.warn { background: var(--amber); }
+    @keyframes breathe { 50% { opacity: .45; transform: scale(.8); } }
+
+    /* ------------------------------------------------------------------ A */
+    .ambient { padding: 84px 24px 110px; background: radial-gradient(900px 600px at 10% 0, #141d18 0%, transparent 62%), #080a09; }
+    .a-intro { width: min(1180px, 100%); margin: 0 auto 26px; display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 28px; align-items: end; }
+    .a-intro .concept-title { max-width: 760px; }
+    .thesis-box { border-left: 1px solid var(--line-strong); padding: 5px 0 5px 18px; }
+    .thesis-box p { margin: 8px 0 0; color: var(--ink-2); font-size: 12px; line-height: 1.55; }
+    .github-shell { position: relative; overflow: hidden; width: min(1180px, 100%); min-height: 620px; margin: auto; border: 1px solid #292d2a; border-radius: 17px; background: #0d1117; box-shadow: var(--shadow); }
+    .gh-topbar { height: 62px; display: flex; align-items: center; gap: 16px; padding: 0 22px; border-bottom: 1px solid #272c33; background: #010409; }
+    .gh-mark { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 50%; background: #f0f6fc; color: #010409; font-weight: 900; }
+    .gh-repo { font-size: 13px; font-weight: 600; }
+    .gh-slash { color: #7d8590; }
+    .gh-search { width: 240px; margin-left: auto; padding: 7px 10px; border: 1px solid #30363d; border-radius: 7px; color: #7d8590; font: 11px var(--mono); }
+    .gh-content { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 32px; padding: 32px 84px 60px 44px; }
+    .gh-pr-title { display: flex; gap: 12px; align-items: baseline; margin: 0 0 14px; font-size: 25px; font-weight: 450; letter-spacing: -.025em; }
+    .gh-pr-title span { color: #7d8590; font-weight: 300; }
+    .gh-open { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 999px; background: #238636; color: white; font-size: 12px; }
+    .gh-rule { height: 1px; margin: 22px 0; background: #30363d; }
+    .gh-tabs { display: flex; gap: 6px; border-bottom: 1px solid #30363d; }
+    .gh-tab { padding: 10px 13px; color: #8b949e; font-size: 12px; }
+    .gh-tab.active { color: #f0f6fc; border-bottom: 2px solid #f78166; }
+    .gh-thread { display: grid; grid-template-columns: 34px 1fr; gap: 12px; margin-top: 25px; }
+    .gh-avatar { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(145deg,#5871ff,#a178ff); }
+    .gh-comment { overflow: hidden; border: 1px solid #30363d; border-radius: 7px; color: #c9d1d9; }
+    .gh-comment-head { padding: 9px 12px; border-bottom: 1px solid #30363d; background: #161b22; font-size: 11px; }
+    .gh-comment-body { min-height: 115px; padding: 18px; font: 12px/1.65 var(--mono); }
+    .gh-code { margin-top: 20px; overflow: hidden; border: 1px solid #30363d; border-radius: 7px; }
+    .gh-code-row { display: grid; grid-template-columns: 34px 34px 1fr; min-height: 27px; font: 10px/27px var(--mono); }
+    .gh-code-row span { color: #6e7681; text-align: right; padding-right: 9px; background: #161b22; border-right: 1px solid #21262d; }
+    .gh-code-row code { padding-left: 14px; color: #c9d1d9; }
+    .gh-code-row.em { background: rgba(248,81,73,.12); }
+    .gh-side { padding-top: 64px; color: #8b949e; font-size: 11px; }
+    .gh-side-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #21262d; }
+    .ambient-rail { position: absolute; z-index: 5; top: 82px; right: 0; bottom: 0; width: 70px; display: flex; align-items: flex-start; justify-content: center; padding-top: 44px; border-left: 1px solid rgba(255,255,255,.06); background: rgba(10,13,12,.86); backdrop-filter: blur(18px); transition: width 240ms var(--ease); }
+    .ambient-rail.open { width: 348px; }
+    .a-orb { position: absolute; top: 20px; left: 15px; width: 40px; height: 40px; border: 1px solid rgba(185,242,124,.25); border-radius: 14px; background: #151a16; cursor: pointer; box-shadow: 0 8px 24px rgba(0,0,0,.28); transition: transform 180ms var(--ease), background 180ms var(--ease); }
+    .a-orb::before { content: ""; position: absolute; inset: 12px 15px; border-radius: 6px; background: var(--lime); box-shadow: -6px 3px 0 -2px var(--lime), 6px -3px 0 -2px var(--lime); }
+    .a-orb:hover { background: #1b231d; transform: translateX(-2px); }
+    .ambient-panel { width: 100%; padding: 34px 22px 22px; opacity: 0; transform: translateX(12px); pointer-events: none; transition: opacity 180ms var(--ease), transform 220ms var(--ease); }
+    .ambient-rail.open .ambient-panel { opacity: 1; transform: none; pointer-events: auto; }
+    .a-head { margin-bottom: 28px; }
+    .a-head h3 { margin: 8px 0 5px; font-size: 19px; letter-spacing: -.03em; }
+    .a-head p { margin: 0; color: var(--ink-3); font-size: 11px; line-height: 1.5; }
+    .a-event { position: relative; padding: 0 0 25px 27px; }
+    .a-event::before { content: ""; position: absolute; left: 5px; top: 13px; bottom: -4px; width: 1px; background: var(--line); }
+    .a-event:last-child::before { display: none; }
+    .a-event-icon { position: absolute; left: 0; top: 2px; width: 11px; height: 11px; border: 2px solid var(--surface); border-radius: 50%; background: var(--line-strong); box-shadow: 0 0 0 1px var(--line-strong); }
+    .a-event.current .a-event-icon { background: var(--blue); box-shadow: 0 0 0 1px var(--blue); }
+    .a-event.done .a-event-icon { background: var(--lime); box-shadow: 0 0 0 1px var(--lime); }
+    .a-event.blocked .a-event-icon { background: var(--amber); box-shadow: 0 0 0 1px var(--amber); }
+    .a-event-title { color: var(--ink-2); font-size: 12px; font-weight: 600; }
+    .a-event-copy { margin-top: 4px; color: var(--ink-3); font-size: 10px; line-height: 1.55; }
+    .a-action { width: 100%; margin-top: 3px; padding: 11px 12px; border: 0; border-radius: 10px; background: var(--ink); color: #101210; font-size: 12px; font-weight: 650; cursor: pointer; transition: transform 160ms var(--ease), background 160ms var(--ease); }
+    .a-action:hover { background: var(--lime); }
+    .a-action:active { transform: scale(.98); }
+    .a-quiet { display: flex; align-items: center; gap: 9px; margin-top: 18px; color: var(--ink-3); font-size: 10px; }
+    .a-quiet::before { content: ""; width: 18px; height: 1px; background: var(--line-strong); }
+    .a-state { position: absolute; left: 20px; bottom: 18px; z-index: 4; padding: 8px 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; background: rgba(1,4,9,.76); }
+
+    /* ------------------------------------------------------------------ B */
+    .mission { min-height: 100vh; padding: 0 0 110px; background: #0b0e0c; }
+    .mc-top { min-height: 70px; display: flex; align-items: center; gap: 24px; padding: 0 30px; border-bottom: 1px solid #2c312d; background: #111411; }
+    .mc-brand { display: flex; align-items: center; gap: 11px; font-weight: 700; font-size: 13px; }
+    .mc-brand-mark { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 8px; color: #101510; background: var(--lime); font-size: 13px; }
+    .mc-breadcrumb { color: var(--ink-3); font: 10px var(--mono); }
+    .mc-stats { margin-left: auto; display: flex; gap: 20px; }
+    .mc-stat { display: grid; grid-template-columns: auto auto; align-items: center; gap: 3px 7px; }
+    .mc-stat b { grid-row: span 2; font-size: 21px; font-weight: 520; letter-spacing: -.04em; }
+    .mc-stat span { color: var(--ink-3); font: 9px/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+    .mc-body { width: min(1440px, 100%); margin: auto; display: grid; grid-template-columns: 225px minmax(560px,1fr) 330px; min-height: calc(100vh - 70px); }
+    .mc-sidebar { padding: 34px 22px; border-right: 1px solid var(--line); }
+    .mc-nav-label { margin: 0 8px 12px; color: var(--ink-3); font: 9px var(--mono); text-transform: uppercase; letter-spacing: .1em; }
+    .mc-nav { width: 100%; display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-3); text-align: left; font-size: 11px; cursor: pointer; }
+    .mc-nav.active { background: var(--surface-3); color: var(--ink); }
+    .mc-nav b { margin-left: auto; color: var(--ink-3); font: 9px var(--mono); }
+    .mc-autonomy { margin-top: 35px; padding: 14px 12px; border: 1px solid var(--line); border-radius: 10px; background: #111512; }
+    .mc-autonomy strong { display: block; margin: 7px 0 3px; font-size: 11px; }
+    .mc-autonomy p { margin: 0; color: var(--ink-3); font-size: 9px; line-height: 1.5; }
+    .mc-center { min-width: 0; padding: 34px 28px; }
+    .mc-title-row { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 25px; }
+    .mc-title-row h1 { margin: 5px 0 0; font-size: 25px; font-weight: 570; letter-spacing: -.04em; }
+    .mc-filter { display: flex; gap: 5px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; }
+    .mc-filter button { padding: 6px 9px; border: 0; border-radius: 6px; color: var(--ink-3); background: transparent; font-size: 9px; cursor: pointer; }
+    .mc-filter button.active { color: var(--ink); background: var(--surface-3); }
+    .fleet-head, .fleet-row { display: grid; grid-template-columns: 28px minmax(180px,1.5fr) minmax(130px,1fr) 86px 80px; align-items: center; gap: 12px; }
+    .fleet-head { padding: 0 12px 9px; color: var(--ink-3); font: 8px var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+    .fleet-row { width: 100%; min-height: 68px; padding: 10px 12px; border: 1px solid transparent; border-top-color: var(--line); background: transparent; text-align: left; cursor: pointer; transition: background 160ms var(--ease), border-color 160ms var(--ease), transform 160ms var(--ease); }
+    .fleet-row:hover { background: #121613; }
+    .fleet-row.selected { border-color: #465048; border-radius: 10px; background: #171c18; box-shadow: 0 8px 30px rgba(0,0,0,.17); }
+    .fleet-row.selected + .fleet-row { border-top-color: transparent; }
+    .fleet-status { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); }
+    .fleet-status.running { background: var(--blue); box-shadow: 0 0 0 5px var(--blue-soft); }
+    .fleet-status.done { background: var(--lime); }
+    .fleet-status.blocked { background: var(--amber); }
+    .fleet-pr strong { display: block; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fleet-pr span, .fleet-task, .fleet-age { color: var(--ink-3); font-size: 9px; }
+    .fleet-agent { display: flex; align-items: center; gap: 7px; font: 9px var(--mono); }
+    .agent-face { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; border: 1px solid var(--line-strong); background: var(--surface-3); font-size: 8px; }
+    .fleet-scope { color: var(--ink-2); font: 8px/1.3 var(--mono); text-transform: uppercase; }
+    .mc-inspector { padding: 34px 25px; border-left: 1px solid var(--line); background: #0e110f; }
+    .mc-inspector h2 { margin: 9px 0 4px; font-size: 18px; letter-spacing: -.035em; }
+    .mc-inspector .repo { color: var(--ink-3); font: 10px var(--mono); }
+    .inspect-status { margin: 22px 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #131714; }
+    .inspect-status strong { display: block; margin: 8px 0 3px; font-size: 11px; }
+    .inspect-status p { margin: 0; color: var(--ink-3); font-size: 9px; line-height: 1.55; }
+    .mc-meter { height: 2px; margin-top: 13px; overflow: hidden; background: var(--line); }
+    .mc-meter span { display: block; height: 100%; width: 56%; background: var(--blue); transition: width 240ms var(--ease); }
+    .inspect-section { padding: 16px 0; border-top: 1px solid var(--line); }
+    .inspect-section-title { display: flex; justify-content: space-between; margin-bottom: 11px; font: 9px var(--mono); color: var(--ink-3); text-transform: uppercase; letter-spacing: .09em; }
+    .receipt-line { display: grid; grid-template-columns: 14px 1fr auto; gap: 8px; margin: 9px 0; color: var(--ink-2); font-size: 9px; }
+    .receipt-line .check { color: var(--lime); }
+    .receipt-line .pending { color: var(--ink-3); }
+    .receipt-line time { color: var(--ink-3); font: 8px var(--mono); }
+    .mc-primary { width: 100%; padding: 11px; border: 0; border-radius: 9px; background: var(--lime); color: #121712; font-size: 10px; font-weight: 700; cursor: pointer; transition: filter 160ms var(--ease), transform 160ms var(--ease); }
+    .mc-primary:hover { filter: brightness(1.08); }
+    .mc-primary:active { transform: scale(.98); }
+
+    /* ------------------------------------------------------------------ C */
+    .studio { min-height: 100vh; padding: 72px 18px 108px; background: linear-gradient(180deg,#11100e,#090a09 32%); }
+    .studio-shell { width: min(1320px,100%); min-height: 760px; margin: auto; overflow: hidden; border: 1px solid #33312c; border-radius: 15px; background: #0e100f; box-shadow: var(--shadow); }
+    .studio-head { height: 68px; display: flex; align-items: center; gap: 16px; padding: 0 23px; border-bottom: 1px solid var(--line); }
+    .studio-wordmark { font: 700 11px var(--mono); }
+    .studio-pr { color: var(--ink-3); font-size: 11px; }
+    .studio-head .pill { margin-left: auto; }
+    .studio-grid { display: grid; grid-template-columns: minmax(290px,.8fr) minmax(420px,1.35fr) minmax(250px,.72fr); min-height: 690px; }
+    .tape { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: #111310; }
+    .tape-head, .diff-head, .plan-head { min-height: 72px; padding: 20px 20px 13px; border-bottom: 1px solid var(--line); }
+    .tape-head h2, .diff-head h2, .plan-head h2 { margin: 5px 0 0; font-size: 15px; letter-spacing: -.03em; }
+    .wave { height: 52px; display: flex; align-items: center; gap: 2px; padding: 0 18px; border-bottom: 1px solid var(--line); }
+    .wave i { width: 2px; border-radius: 2px; background: #62685f; opacity: .65; }
+    .wave i.active { background: var(--lime); opacity: 1; }
+    .utterances { padding: 13px; }
+    .utterance { width: 100%; display: grid; grid-template-columns: 35px 1fr; gap: 9px; padding: 11px 9px; border: 1px solid transparent; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; transition: background 160ms var(--ease), border-color 160ms var(--ease); }
+    .utterance:hover { background: var(--surface-2); }
+    .utterance.active { border-color: #4c554e; background: #1a1e1a; }
+    .utterance time { padding-top: 2px; color: var(--ink-3); font: 8px var(--mono); }
+    .utterance p { margin: 0; color: var(--ink-2); font-size: 10px; line-height: 1.55; }
+    .utterance-tag { display: inline-flex; margin-top: 7px; padding: 3px 5px; border-radius: 4px; color: var(--purple); background: rgba(196,167,255,.09); font: 7px var(--mono); text-transform: uppercase; }
+    .diff { min-width: 0; background: #0d0f0e; }
+    .diff-head { display: flex; align-items: center; gap: 12px; }
+    .diff-head .file-meta { margin-left: auto; color: var(--ink-3); font: 8px var(--mono); }
+    .diff-body { padding: 20px 0; overflow: auto; }
+    .diff-hunk { padding: 7px 19px; color: #7e9aa0; background: rgba(80,120,130,.09); font: 9px/1.5 var(--mono); }
+    .code-line { display: grid; grid-template-columns: 34px 34px 16px minmax(430px,1fr); min-height: 29px; font: 9px/29px var(--mono); white-space: pre; }
+    .code-line .ln { color: #555c57; text-align: right; padding-right: 8px; user-select: none; }
+    .code-line .sign { text-align: center; }
+    .code-line code { color: #bdc4bf; }
+    .code-line.minus { background: rgba(255,90,80,.085); }
+    .code-line.plus { background: rgba(130,220,120,.085); }
+    .code-line.minus .sign { color: var(--red); }
+    .code-line.plus .sign { color: var(--lime); }
+    .anchor-pin { display: inline-flex; align-items: center; gap: 7px; margin: 14px 20px; padding: 7px 9px; border: 1px solid rgba(196,167,255,.22); border-radius: 7px; color: #d8c8ff; background: rgba(196,167,255,.06); font: 8px var(--mono); }
+    .anchor-pin::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--purple); }
+    .plan { display: flex; flex-direction: column; border-left: 1px solid var(--line); background: #121411; }
+    .plan-list { flex: 1; padding: 14px; }
+    .plan-item { padding: 12px 11px; border-bottom: 1px solid var(--line); }
+    .plan-item-top { display: flex; gap: 7px; align-items: center; }
+    .plan-index { width: 19px; height: 19px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink-3); font: 8px var(--mono); }
+    .plan-item h3 { margin: 0; font-size: 10px; font-weight: 620; line-height: 1.35; }
+    .plan-item p { margin: 8px 0 0 26px; color: var(--ink-3); font-size: 8px; line-height: 1.55; }
+    .plan-item.candidate { opacity: .58; }
+    .plan-item.selected { background: var(--lime-soft); border-radius: 8px; }
+    .plan-footer { padding: 15px; border-top: 1px solid var(--line); }
+    .compile-status { margin-bottom: 12px; color: var(--ink-3); font-size: 9px; line-height: 1.45; }
+    .compile-btn { width: 100%; padding: 11px; border: 0; border-radius: 9px; color: #141814; background: var(--ink); font-size: 10px; font-weight: 700; cursor: pointer; transition: background 160ms var(--ease), transform 160ms var(--ease); }
+    .compile-btn:hover { background: var(--lime); }
+    .compile-btn:active { transform: scale(.98); }
+
+    /* ------------------------------------------------------------------ D */
+    .trust { min-height: 100vh; padding: 84px 28px 120px; background: radial-gradient(800px 520px at 50% -5%,rgba(143,189,255,.12),transparent 65%),#090b0c; }
+    .trust-wrap { width: min(1120px,100%); margin: auto; }
+    .trust-intro { display: grid; grid-template-columns: 1fr 320px; gap: 50px; align-items: end; margin-bottom: 32px; }
+    .trust-intro .concept-title { max-width: 710px; }
+    .envelope-summary { padding: 18px; border: 1px solid #33404b; border-radius: 12px; background: rgba(15,20,24,.78); }
+    .envelope-summary strong { display: block; margin: 9px 0 4px; font-size: 14px; }
+    .envelope-summary p { margin: 0; color: var(--ink-3); font-size: 10px; line-height: 1.55; }
+    .trust-console { overflow: hidden; border: 1px solid #303842; border-radius: 15px; background: #0e1215; box-shadow: var(--shadow); }
+    .trust-bar { min-height: 64px; display: flex; align-items: center; gap: 13px; padding: 0 20px; border-bottom: 1px solid #29323a; }
+    .trust-bar strong { font-size: 12px; }
+    .trust-bar .session { color: var(--ink-3); font: 9px var(--mono); }
+    .trust-bar .pill { margin-left: auto; }
+    .trust-columns { display: grid; grid-template-columns: 250px minmax(430px,1fr) 285px; min-height: 560px; }
+    .scope-stack { padding: 24px 18px; border-right: 1px solid #29323a; background: #0c1012; }
+    .scope-choice { position: relative; width: 100%; display: block; margin: 7px 0; padding: 12px 12px 12px 34px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: var(--ink-3); text-align: left; cursor: pointer; transition: background 160ms var(--ease), border 160ms var(--ease); }
+    .scope-choice::before { content: ""; position: absolute; left: 12px; top: 15px; width: 8px; height: 8px; border: 1px solid #56616a; border-radius: 50%; }
+    .scope-choice strong { display: block; color: inherit; font-size: 10px; }
+    .scope-choice span { display: block; margin-top: 3px; font-size: 8px; line-height: 1.45; }
+    .scope-choice.active { border-color: #405364; color: var(--ink); background: rgba(143,189,255,.07); }
+    .scope-choice.active::before { background: var(--blue); border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+    .scope-ceiling { margin: 25px 5px 0; padding-top: 15px; border-top: 1px solid #29323a; color: var(--ink-3); font-size: 8px; line-height: 1.55; }
+    .effects { padding: 24px 22px; }
+    .effect-head { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 18px; }
+    .effect-head h2 { margin: 6px 0 0; font-size: 17px; letter-spacing: -.035em; }
+    .effect-head span { color: var(--ink-3); font: 8px var(--mono); }
+    .effect-action { margin-bottom: 18px; }
+    .action-line { display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px; border: 1px solid #2b343c; border-radius: 9px 9px 0 0; background: #12181c; }
+    .action-symbol { width: 21px; height: 21px; display: grid; place-items: center; border: 1px solid #40505c; border-radius: 6px; color: var(--blue); font: 9px var(--mono); }
+    .action-line strong { display: block; font-size: 10px; }
+    .action-line small { color: var(--ink-3); font-size: 8px; }
+    .effect-row { display: grid; grid-template-columns: 22px minmax(160px,1fr) auto; gap: 9px; align-items: center; min-height: 49px; margin-left: 16px; padding: 8px 10px; border-left: 1px solid #34404a; border-bottom: 1px solid #222b31; }
+    .effect-type { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; background: #182126; color: var(--ink-3); font: 8px var(--mono); }
+    .effect-row strong { display: block; font-size: 9px; }
+    .effect-row small { color: var(--ink-3); font: 7px/1.4 var(--mono); }
+    .effect-verdict { display: inline-flex; align-items: center; gap: 5px; font: 7px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+    .effect-verdict.allowed { color: var(--lime); }
+    .effect-verdict.request { color: var(--amber); }
+    .effect-verdict.receipted { color: var(--blue); }
+    .decision { padding: 24px 19px; border-left: 1px solid #29323a; background: #0b0f11; }
+    .decision-box { margin-top: 15px; padding: 15px; border: 1px solid #37424b; border-radius: 10px; background: #12171a; }
+    .decision-box strong { display: block; font-size: 11px; }
+    .decision-box p { margin: 7px 0 13px; color: var(--ink-3); font-size: 8px; line-height: 1.55; }
+    .decision-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .decision-btns button { padding: 9px 7px; border: 1px solid #3a454d; border-radius: 7px; background: transparent; font-size: 8px; cursor: pointer; transition: background 160ms var(--ease), transform 160ms var(--ease); }
+    .decision-btns button.primary { color: #101510; border-color: var(--lime); background: var(--lime); }
+    .decision-btns button:hover { filter: brightness(1.1); }
+    .decision-btns button:active { transform: scale(.97); }
+    .trust-history { margin-top: 21px; padding-top: 17px; border-top: 1px solid #29323a; }
+    .history-row { position: relative; padding: 0 0 15px 18px; color: var(--ink-3); font-size: 8px; line-height: 1.45; }
+    .history-row::before { content: ""; position: absolute; top: 3px; left: 1px; width: 5px; height: 5px; border-radius: 50%; background: #58636b; }
+    .history-row::after { content: ""; position: absolute; top: 10px; bottom: 0; left: 3px; width: 1px; background: #29323a; }
+    .history-row:last-child::after { display: none; }
+    .history-row b { color: var(--ink-2); font-weight: 500; }
+
+    @media (max-width: 1040px) {
+      .mc-body { grid-template-columns: 180px minmax(500px,1fr); }
+      .mc-inspector { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+      .studio-grid { grid-template-columns: 290px minmax(430px,1fr); }
+      .plan { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); }
+      .trust-columns { grid-template-columns: 220px 1fr; }
+      .decision { grid-column: 1 / -1; border-left: 0; border-top: 1px solid #29323a; }
+    }
+    @media (max-width: 760px) {
+      .prototype-flag { top: 10px; }
+      .ambient, .trust { padding-inline: 12px; }
+      .a-intro, .trust-intro { grid-template-columns: 1fr; gap: 18px; }
+      .github-shell { min-height: 680px; }
+      .gh-content { display: block; padding: 30px 84px 50px 18px; }
+      .gh-side { display: none; }
+      .gh-search { display: none; }
+      .ambient-rail.open { width: min(348px, calc(100% - 26px)); }
+      .mc-top { padding-inline: 14px; }
+      .mc-stats, .mc-breadcrumb { display: none; }
+      .mc-body { display: block; }
+      .mc-sidebar { display: flex; gap: 5px; overflow-x: auto; padding: 13px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .mc-nav-label, .mc-autonomy { display: none; }
+      .mc-nav { width: auto; white-space: nowrap; }
+      .mc-center { padding: 24px 12px; overflow-x: auto; }
+      .mc-title-row { align-items: flex-start; gap: 15px; }
+      .fleet-table { min-width: 650px; }
+      .studio { padding-inline: 8px; }
+      .studio-grid { display: block; }
+      .tape, .plan { border: 0; border-bottom: 1px solid var(--line); }
+      .diff { overflow-x: auto; }
+      .trust-columns { display: block; }
+      .scope-stack { border-right: 0; border-bottom: 1px solid #29323a; }
+      .concept-title { font-size: 38px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype-flag" aria-label="Throwaway prototype">Throwaway prototype</div>
+
+  <main>
+    <!-- A: control plane is the thin edge around the work -->
+    <section class="variant ambient" data-variant="A" aria-labelledby="a-title">
+      <header class="a-intro">
+        <div>
+          <div class="concept-kicker">A · Ambient edge</div>
+          <h1 class="concept-title" id="a-title">Absent until it matters.</h1>
+          <p class="concept-deck">The control plane lives at GitHub’s edge. The happy path is a quiet pulse; only active work, ambiguity, or blocked effects earn space.</p>
+        </div>
+        <aside class="thesis-box">
+          <div class="tiny-label">Primary action</div>
+          <p><strong>Keep reviewing.</strong> Speak naturally, then intervene only when voice-pr needs a decision.</p>
+        </aside>
+      </header>
+
+      <div class="github-shell">
+        <div class="gh-topbar">
+          <div class="gh-mark">⌁</div>
+          <span class="gh-repo">bath <span class="gh-slash">/</span> voice-pr</span>
+          <div class="gh-search">Type / to search</div>
+          <span class="pill">Pull requests</span>
+        </div>
+        <div class="gh-content">
+          <div>
+            <h2 class="gh-pr-title">Implement the Voice Action Framework <span>#64</span></h2>
+            <div><span class="gh-open">⌘ Open</span> <span class="muted" style="font-size:11px">miller wants to merge 9 commits into main</span></div>
+            <div class="gh-rule"></div>
+            <div class="gh-tabs"><span class="gh-tab active">Conversation</span><span class="gh-tab">Commits 9</span><span class="gh-tab">Checks 12</span><span class="gh-tab">Files changed 18</span></div>
+            <div class="gh-thread">
+              <div class="gh-avatar"></div>
+              <div class="gh-comment">
+                <div class="gh-comment-head"><strong>miller</strong> commented 18 minutes ago</div>
+                <div class="gh-comment-body">The action framework makes spoken feedback durable without turning a review into project management. Effects remain capability-gated and locally receipted.</div>
+              </div>
+            </div>
+            <div class="gh-code">
+              <div class="gh-code-row"><span>112</span><span>112</span><code>const plan = compileSession(utterances, actionState);</code></div>
+              <div class="gh-code-row em"><span>113</span><span>113</span><code>await executePlan(plan, authorizationEnvelope);</code></div>
+              <div class="gh-code-row"><span>114</span><span>114</span><code>return reconcileReceipts(plan.effects);</code></div>
+            </div>
+          </div>
+          <aside class="gh-side"><div class="gh-side-row"><b>Reviewers</b><span>2</span></div><div class="gh-side-row"><b>Labels</b><span>architecture</span></div><div class="gh-side-row"><b>Development</b><span>1 branch</span></div></aside>
+        </div>
+
+        <aside class="ambient-rail" id="a-rail" aria-label="voice-pr ambient edge">
+          <button class="a-orb" id="a-orb" aria-label="Open voice-pr edge" aria-expanded="false"></button>
+          <div class="ambient-panel">
+            <div class="a-head">
+              <div class="tiny-label">voice-pr · PR #64</div>
+              <h3 id="a-headline">Ready when you are</h3>
+              <p id="a-subhead">This edge stays quiet while you review.</p>
+            </div>
+            <div id="a-timeline">
+              <div class="a-event current"><i class="a-event-icon"></i><div class="a-event-title">Start a voice pass</div><div class="a-event-copy">Local audio · anchored to this pull request</div></div>
+              <div class="a-event"><i class="a-event-icon"></i><div class="a-event-title">Effects stay inside PR scope</div><div class="a-event-copy">Edit, validate, commit, and update this PR.</div></div>
+            </div>
+            <button class="a-action" id="a-action">Start speaking</button>
+            <div class="a-quiet">Nothing is shared until an authorized effect occurs.</div>
+          </div>
+        </aside>
+        <div class="a-state state-readout">prototype state · <b id="a-state">quiet</b></div>
+      </div>
+    </section>
+
+    <!-- B: control plane is an operations fleet -->
+    <section class="variant mission" data-variant="B" aria-labelledby="b-title">
+      <header class="mc-top">
+        <div class="mc-brand"><span class="mc-brand-mark">V</span> voice-pr</div>
+        <span class="mc-breadcrumb">Workspace / Review fleet</span>
+        <div class="mc-stats"><div class="mc-stat"><b>3</b><span>Agents</span><span>working</span></div><div class="mc-stat"><b>1</b><span>Needs</span><span>you</span></div><div class="mc-stat"><b>14</b><span>Effects</span><span>receipted</span></div></div>
+      </header>
+      <div class="mc-body">
+        <nav class="mc-sidebar" aria-label="Mission control sections">
+          <div class="mc-nav-label">Control plane</div>
+          <button class="mc-nav active">◉ Fleet <b>6</b></button>
+          <button class="mc-nav">◌ Queue <b>2</b></button>
+          <button class="mc-nav">△ Exceptions <b>1</b></button>
+          <button class="mc-nav">✓ Receipts <b>14</b></button>
+          <div class="mc-autonomy"><div class="tiny-label">Workspace ceiling</div><strong>Pull requests</strong><p>Agents may commit and update the PR they were dispatched from.</p></div>
+        </nav>
+
+        <div class="mc-center">
+          <div class="mc-title-row">
+            <div><div class="concept-kicker">B · Mission control</div><h1 id="b-title">The review fleet</h1></div>
+            <div class="mc-filter" aria-label="Filter review fleet"><button class="active">All</button><button>Active</button><button>Needs you</button></div>
+          </div>
+          <p class="sr-only">The control plane is a cross-repository operations room. Your primary action is prioritizing work and resolving exceptions.</p>
+          <div class="fleet-table">
+            <div class="fleet-head"><span></span><span>Pull request</span><span>Outcome</span><span>Agent</span><span>Scope</span></div>
+            <button class="fleet-row selected" data-job="64" data-status="running">
+              <i class="fleet-status running"></i><span class="fleet-pr"><strong>Voice Action Framework</strong><span>bath/voice-pr · #64</span></span><span class="fleet-task">Validating effect receipts…</span><span class="fleet-agent"><i class="agent-face">7F</i>7fa2</span><span class="fleet-scope">This PR</span>
+            </button>
+            <button class="fleet-row" data-job="218" data-status="blocked">
+              <i class="fleet-status blocked"></i><span class="fleet-pr"><strong>Retry checkout webhooks</strong><span>bath/payments · #218</span></span><span class="fleet-task">Push needs approval</span><span class="fleet-agent"><i class="agent-face">3C</i>3c91</span><span class="fleet-scope">Local</span>
+            </button>
+            <button class="fleet-row" data-job="91" data-status="done">
+              <i class="fleet-status done"></i><span class="fleet-pr"><strong>Remove legacy flags</strong><span>bath/console · #91</span></span><span class="fleet-task">Merged 2 commits</span><span class="fleet-agent"><i class="agent-face">A1</i>a117</span><span class="fleet-scope">This PR</span>
+            </button>
+            <button class="fleet-row" data-job="12" data-status="queued">
+              <i class="fleet-status"></i><span class="fleet-pr"><strong>Mobile session replay</strong><span>bath/ios · #12</span></span><span class="fleet-task">Queued behind #64</span><span class="fleet-agent"><i class="agent-face">—</i>pending</span><span class="fleet-scope">Read</span>
+            </button>
+            <button class="fleet-row" data-job="443" data-status="done">
+              <i class="fleet-status done"></i><span class="fleet-pr"><strong>Guard nullable customer</strong><span>bath/api · #443</span></span><span class="fleet-task">Tests added · pushed</span><span class="fleet-agent"><i class="agent-face">8D</i>8d04</span><span class="fleet-scope">This PR</span>
+            </button>
+          </div>
+        </div>
+
+        <aside class="mc-inspector" aria-live="polite">
+          <div class="tiny-label">Selected review</div>
+          <h2 id="b-inspect-title">Voice Action Framework</h2>
+          <div class="repo" id="b-inspect-repo">bath/voice-pr · #64</div>
+          <div class="inspect-status"><span class="pill"><i class="dot work" id="b-dot"></i><span id="b-status-label">Working</span></span><strong id="b-outcome">Validating the action plan</strong><p id="b-detail">The agent is checking three requested effects against this PR’s current head.</p><div class="mc-meter"><span id="b-meter"></span></div></div>
+          <div class="inspect-section"><div class="inspect-section-title"><span>Effect receipts</span><span>2 / 3</span></div><div id="b-receipts"><div class="receipt-line"><span class="check">✓</span><span>Edit local files</span><time>12:41:08</time></div><div class="receipt-line"><span class="check">✓</span><span>Run test suite</span><time>12:41:13</time></div><div class="receipt-line"><span class="pending">○</span><span>Commit changes</span><time>pending</time></div></div></div>
+          <div class="inspect-section"><div class="inspect-section-title"><span>Authorization</span><span>Session only</span></div><div class="state-readout">envelope · <b>This pull request</b><br>ceiling · <b>Repository policy</b></div></div>
+          <button class="mc-primary" id="b-action">Advance selected run</button>
+        </aside>
+      </div>
+    </section>
+
+    <!-- C: control plane is an editorial review studio -->
+    <section class="variant studio" data-variant="C" aria-labelledby="c-title">
+      <div class="studio-shell">
+        <header class="studio-head"><span class="studio-wordmark">VOICE / REVIEW STUDIO</span><span class="studio-pr">bath/voice-pr · PR #64</span><span class="pill"><i class="dot good"></i> Recording captured · 01:14</span></header>
+        <div class="studio-grid">
+          <aside class="tape">
+            <div class="tape-head"><div class="concept-kicker">C · Review studio</div><h2 id="c-title">Speech is the editing timeline</h2></div>
+            <div class="wave" aria-hidden="true" id="c-wave"></div>
+            <div class="utterances">
+              <button class="utterance active" data-utterance="0"><time>00:08</time><span><p>“These receipts can match more than one same-capability effect.”</p><i class="utterance-tag">Defect assertion</i></span></button>
+              <button class="utterance" data-utterance="1"><time>00:31</time><span><p>“Tie each receipt to the planned effect identity.”</p><i class="utterance-tag">Requested outcome</i></span></button>
+              <button class="utterance" data-utterance="2"><time>00:52</time><span><p>“I’m not sure cancel should erase anything here.”</p><i class="utterance-tag">Candidate</i></span></button>
+              <button class="utterance" data-utterance="3"><time>01:06</time><span><p>“Run the framework and recovery tests before committing.”</p><i class="utterance-tag">Session directive</i></span></button>
+            </div>
+          </aside>
+
+          <section class="diff">
+            <div class="diff-head"><div><div class="tiny-label">Anchor at 00:08</div><h2>lib/action-framework.js</h2></div><span class="file-meta">@@ effect receipts · L312</span></div>
+            <div class="diff-body">
+              <div class="diff-hunk">@@ -312,8 +312,12 @@ function reconcileReceipt(effect, receipts) {</div>
+              <div class="code-line"><span class="ln">312</span><span class="ln">312</span><span class="sign"> </span><code>const matching = receipts.find((receipt) =&gt;</code></div>
+              <div class="code-line minus"><span class="ln">313</span><span class="ln"></span><span class="sign">−</span><code>  receipt.sessionId === effect.sessionId &amp;&amp;</code></div>
+              <div class="code-line minus"><span class="ln">314</span><span class="ln"></span><span class="sign">−</span><code>  receipt.capability === effect.capability</code></div>
+              <div class="code-line plus"><span class="ln"></span><span class="ln">313</span><span class="sign">+</span><code>  receipt.effectId === effect.id &amp;&amp;</code></div>
+              <div class="code-line plus"><span class="ln"></span><span class="ln">314</span><span class="sign">+</span><code>  receipt.planDigest === effect.planDigest</code></div>
+              <div class="code-line"><span class="ln">315</span><span class="ln">315</span><span class="sign"> </span><code>);</code></div>
+              <div class="anchor-pin" id="c-anchor">Voice anchor · “These receipts can match more than one…”</div>
+              <div class="diff-hunk">@@ -351,5 +355,7 @@ function projectAction(operations) {</div>
+              <div class="code-line"><span class="ln">351</span><span class="ln">355</span><span class="sign"> </span><code>for (const operation of operations) {</code></div>
+              <div class="code-line plus"><span class="ln"></span><span class="ln">356</span><span class="sign">+</span><code>  if (operation.type === "cancel") action.progress = "cancelled";</code></div>
+              <div class="code-line plus"><span class="ln"></span><span class="ln">357</span><span class="sign">+</span><code>  if (operation.type === "invalidate") action.verification = "invalidated";</code></div>
+            </div>
+          </section>
+
+          <aside class="plan">
+            <div class="plan-head"><div class="tiny-label">Compiled interpretation</div><h2>Action plan</h2></div>
+            <div class="plan-list">
+              <div class="plan-item selected"><div class="plan-item-top"><span class="plan-index">01</span><h3>Make effect receipts identify one planned effect</h3></div><p>Requested · 2 operations · acceptance: same-capability effects reconcile independently</p></div>
+              <div class="plan-item"><div class="plan-item-top"><span class="plan-index">02</span><h3>Project lifecycle operations into Action facets</h3></div><p>Requested · cancel and invalidate remain append-only</p></div>
+              <div class="plan-item candidate"><div class="plan-item-top"><span class="plan-index">03</span><h3>Reconsider cancellation semantics</h3></div><p>Candidate · requires clarification before mutation</p></div>
+            </div>
+            <div class="plan-footer"><div class="compile-status" id="c-status">4 utterances compile to 2 requested Actions and 1 candidate. PR-scoped effects fit the active envelope.</div><button class="compile-btn" id="c-compile">Approve plan &amp; apply</button><div class="state-readout" style="margin-top:10px">prototype state · <b id="c-state">compiled</b></div></div>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <!-- D: control plane is an explicit trust / effect hierarchy -->
+    <section class="variant trust" data-variant="D" aria-labelledby="d-title">
+      <div class="trust-wrap">
+        <header class="trust-intro">
+          <div><div class="concept-kicker">D · Trust console</div><h1 class="concept-title" id="d-title">Authorize outcomes, not agents.</h1><p class="concept-deck">The control plane is an inspectable envelope around every external effect. The user’s primary action is deciding exactly what may leave the local workspace.</p></div>
+          <aside class="envelope-summary"><div class="tiny-label">Active envelope</div><strong id="d-envelope-title">Local workspace</strong><p id="d-envelope-copy">Read, edit, and validate. Commits and GitHub updates ask first.</p></aside>
+        </header>
+
+        <div class="trust-console">
+          <div class="trust-bar"><strong>Authorization session</strong><span class="session">ses_7fa2 · bath/voice-pr · #64</span><span class="pill"><i class="dot warn" id="d-top-dot"></i><span id="d-top-status">1 decision needed</span></span></div>
+          <div class="trust-columns">
+            <aside class="scope-stack">
+              <div class="tiny-label">Authorization envelope</div>
+              <button class="scope-choice" data-scope="read"><strong>Observe</strong><span>Read PR and inspect the local workspace.</span></button>
+              <button class="scope-choice active" data-scope="local"><strong>Prepare locally</strong><span>Edit files and run validation.</span></button>
+              <button class="scope-choice" data-scope="pr"><strong>Update this PR</strong><span>Commit, push, and publish to PR #64.</span></button>
+              <button class="scope-choice" data-scope="repo"><strong>Repository session</strong><span>Apply effects across bath/voice-pr this session.</span></button>
+              <div class="scope-ceiling"><strong class="muted">Hard ceiling</strong><br>Force-push, merge, secrets, and repository settings always remain unavailable.</div>
+            </aside>
+
+            <section class="effects">
+              <div class="effect-head"><div><div class="tiny-label">Requested effects</div><h2>Resolve receipt identity collisions</h2></div><span>plan 8ad4f1</span></div>
+              <div class="effect-action">
+                <div class="action-line"><span class="action-symbol">A1</span><span><strong>Make each receipt identify one planned effect</strong><small>Acceptance · same-capability effects reconcile independently</small></span></div>
+                <div class="effect-row"><span class="effect-type">E1</span><span><strong>Edit lib/action-framework.js</strong><small>effect:file.write · local workspace</small></span><span class="effect-verdict allowed">● allowed</span></div>
+                <div class="effect-row"><span class="effect-type">E2</span><span><strong>Run framework + recovery tests</strong><small>effect:process.test · local workspace</small></span><span class="effect-verdict allowed">● allowed</span></div>
+                <div class="effect-row"><span class="effect-type">E3</span><span><strong>Create commit on PR branch</strong><small>effect:git.commit · bath/voice-pr#64</small></span><span class="effect-verdict request" id="d-effect-verdict">● asks first</span></div>
+              </div>
+              <div class="effect-action">
+                <div class="action-line"><span class="action-symbol">A2</span><span><strong>Project cancel and invalidate operations</strong><small>Acceptance · Action facets reflect the append-only history</small></span></div>
+                <div class="effect-row"><span class="effect-type">E4</span><span><strong>Edit lib/action-store.js</strong><small>effect:file.write · local workspace</small></span><span class="effect-verdict allowed">● allowed</span></div>
+                <div class="effect-row"><span class="effect-type">E5</span><span><strong>Update PR branch</strong><small>effect:git.push · bath/voice-pr#64</small></span><span class="effect-verdict request" id="d-effect-verdict-2">● asks first</span></div>
+              </div>
+            </section>
+
+            <aside class="decision" aria-live="polite">
+              <div class="tiny-label">Decision boundary</div>
+              <div class="decision-box" id="d-decision-box"><strong id="d-decision-title">2 effects cross the envelope</strong><p id="d-decision-copy">The code and tests can finish locally. Creating and pushing a commit requires “Update this PR”.</p><div class="decision-btns"><button id="d-deny">Keep local</button><button class="primary" id="d-grant">Allow once</button></div></div>
+              <div class="trust-history"><div class="tiny-label" style="margin-bottom:12px">Audit trail</div><div class="history-row"><b>12:40:56</b><br>Plan compiled · 5 effects</div><div class="history-row"><b>12:40:57</b><br>E1 and E2 entered local envelope</div><div class="history-row" id="d-history-last"><b>Now</b><br>Waiting on E3 and E5</div></div>
+              <div class="state-readout">prototype state · <b id="d-state">awaiting decision</b></div>
+            </aside>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <nav class="variant-switcher" aria-label="Prototype variant switcher">
+    <button class="switch-arrow" id="variant-prev" aria-label="Previous variant">←</button>
+    <div class="switch-current" aria-live="polite"><strong id="variant-name">A — Ambient edge</strong><span>Use ← → · URL remembers this view</span></div>
+    <button class="switch-arrow" id="variant-next" aria-label="Next variant">→</button>
+  </nav>
+
+  <script>
+    const variantMeta = {
+      A: "Ambient edge",
+      B: "Mission control",
+      C: "Review studio",
+      D: "Trust console",
+    };
+    const variantKeys = Object.keys(variantMeta);
+
+    function activateVariant(key, { replace = true } = {}) {
+      const safeKey = variantMeta[key] ? key : "A";
+      document.querySelectorAll(".variant").forEach((node) => node.classList.toggle("active", node.dataset.variant === safeKey));
+      document.getElementById("variant-name").textContent = `${safeKey} — ${variantMeta[safeKey]}`;
+      document.title = `voice-pr · ${variantMeta[safeKey]} prototype`;
+      const url = new URL(location.href);
+      url.searchParams.set("variant", safeKey);
+      history[replace ? "replaceState" : "pushState"]({}, "", url);
+    }
+
+    function cycleVariant(delta) {
+      const current = new URLSearchParams(location.search).get("variant") || "A";
+      const currentIndex = Math.max(0, variantKeys.indexOf(current));
+      activateVariant(variantKeys[(currentIndex + delta + variantKeys.length) % variantKeys.length], { replace: true });
+    }
+
+    document.getElementById("variant-prev").addEventListener("click", () => cycleVariant(-1));
+    document.getElementById("variant-next").addEventListener("click", () => cycleVariant(1));
+    window.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+      const target = event.target;
+      if (target.matches("input, textarea, select, [contenteditable]")) return;
+      event.preventDefault();
+      cycleVariant(event.key === "ArrowRight" ? 1 : -1);
+    });
+    window.addEventListener("popstate", () => activateVariant(new URLSearchParams(location.search).get("variant") || "A"));
+
+    // A — the edge has a compact, in-memory happy/exception loop.
+    const aRail = document.getElementById("a-rail");
+    const aOrb = document.getElementById("a-orb");
+    let aPhase = "quiet";
+    const aViews = {
+      quiet: {
+        headline: "Ready when you are", subhead: "This edge stays quiet while you review.", action: "Start speaking",
+        timeline: '<div class="a-event current"><i class="a-event-icon"></i><div class="a-event-title">Start a voice pass</div><div class="a-event-copy">Local audio · anchored to this pull request</div></div><div class="a-event"><i class="a-event-icon"></i><div class="a-event-title">Effects stay inside PR scope</div><div class="a-event-copy">Edit, validate, commit, and update this PR.</div></div>'
+      },
+      listening: {
+        headline: "Listening on PR #64", subhead: "Three anchors captured · 00:38", action: "Finish voice pass",
+        timeline: '<div class="a-event done"><i class="a-event-icon"></i><div class="a-event-title">Receipt identity collision</div><div class="a-event-copy">lib/action-framework.js · line 313</div></div><div class="a-event current"><i class="a-event-icon"></i><div class="a-event-title">Capturing context</div><div class="a-event-copy">No interpretation happens while you speak.</div></div>'
+      },
+      working: {
+        headline: "Applying two outcomes", subhead: "You can keep reviewing. This edge will interrupt only if needed.", action: "Simulate exception",
+        timeline: '<div class="a-event done"><i class="a-event-icon"></i><div class="a-event-title">Compiled 3 Actions</div><div class="a-event-copy">2 requested · 1 candidate held for clarification</div></div><div class="a-event current"><i class="a-event-icon"></i><div class="a-event-title">Validating changes</div><div class="a-event-copy">Framework and recovery tests</div></div>'
+      },
+      blocked: {
+        headline: "One decision needs you", subhead: "Everything else finished locally.", action: "Allow PR update once",
+        timeline: '<div class="a-event done"><i class="a-event-icon"></i><div class="a-event-title">Prepared and tested locally</div><div class="a-event-copy">2 files · 8 tests passing</div></div><div class="a-event blocked"><i class="a-event-icon"></i><div class="a-event-title">Update PR #64?</div><div class="a-event-copy">Create and push one commit. Your repository ceiling still applies.</div></div>'
+      },
+      success: {
+        headline: "Two outcomes landed", subhead: "One commit pushed to PR #64 · 18s", action: "Start another pass",
+        timeline: '<div class="a-event done"><i class="a-event-icon"></i><div class="a-event-title">Receipt matching fixed</div><div class="a-event-copy">Each planned effect now reconciles independently.</div></div><div class="a-event done"><i class="a-event-icon"></i><div class="a-event-title">Action projections updated</div><div class="a-event-copy">Cancel and invalidate preserve history.</div></div>'
+      }
+    };
+    function renderA() {
+      const view = aViews[aPhase];
+      document.getElementById("a-headline").textContent = view.headline;
+      document.getElementById("a-subhead").textContent = view.subhead;
+      document.getElementById("a-action").textContent = view.action;
+      document.getElementById("a-timeline").innerHTML = view.timeline;
+      document.getElementById("a-state").textContent = aPhase;
+    }
+    aOrb.addEventListener("click", () => { const open = aRail.classList.toggle("open"); aOrb.setAttribute("aria-expanded", String(open)); });
+    document.getElementById("a-action").addEventListener("click", () => { aPhase = ({ quiet:"listening", listening:"working", working:"blocked", blocked:"success", success:"listening" })[aPhase]; renderA(); });
+
+    // B — selecting a row changes the operational inspector; #64 can advance.
+    const bJobs = {
+      "64": ["Voice Action Framework", "bath/voice-pr · #64", "working", "Validating the action plan", "The agent is checking three requested effects against this PR’s current head."],
+      "218": ["Retry checkout webhooks", "bath/payments · #218", "blocked", "Push needs your decision", "The patch and tests are ready locally. Updating PR #218 is outside this run’s envelope."],
+      "91": ["Remove legacy flags", "bath/console · #91", "done", "Two commits merged", "All requested outcomes are verified against the current main branch."],
+      "12": ["Mobile session replay", "bath/ios · #12", "queued", "Waiting for an agent", "This review will start when the branch-writing slot becomes available."],
+      "443": ["Guard nullable customer", "bath/api · #443", "done", "Tests added and pushed", "The PR now handles missing customers and includes the regression test."],
+    };
+    let bSelected = "64";
+    let bPhase = "working";
+    function renderB() {
+      const job = [...bJobs[bSelected]];
+      if (bSelected === "64" && bPhase === "done") { job[2] = "done"; job[3] = "Three effects receipted"; job[4] = "The fix is committed on PR #64 and the acceptance condition passed."; }
+      document.getElementById("b-inspect-title").textContent = job[0];
+      document.getElementById("b-inspect-repo").textContent = job[1];
+      document.getElementById("b-outcome").textContent = job[3];
+      document.getElementById("b-detail").textContent = job[4];
+      const dot = document.getElementById("b-dot");
+      dot.className = `dot ${job[2] === "done" ? "good" : job[2] === "blocked" ? "warn" : job[2] === "working" ? "work" : ""}`;
+      document.getElementById("b-status-label").textContent = ({done:"Resolved",blocked:"Needs you",working:"Working",queued:"Queued"})[job[2]];
+      document.getElementById("b-meter").style.width = job[2] === "done" ? "100%" : job[2] === "blocked" ? "82%" : job[2] === "queued" ? "8%" : "56%";
+      document.getElementById("b-action").textContent = bSelected === "64" && bPhase !== "done" ? "Advance selected run" : job[2] === "blocked" ? "Review exception" : "Open pull request";
+      document.getElementById("b-receipts").innerHTML = job[2] === "done" ? '<div class="receipt-line"><span class="check">✓</span><span>Edit local files</span><time>12:41:08</time></div><div class="receipt-line"><span class="check">✓</span><span>Run test suite</span><time>12:41:13</time></div><div class="receipt-line"><span class="check">✓</span><span>Commit changes</span><time>12:41:18</time></div>' : '<div class="receipt-line"><span class="check">✓</span><span>Edit local files</span><time>12:41:08</time></div><div class="receipt-line"><span class="check">✓</span><span>Run test suite</span><time>12:41:13</time></div><div class="receipt-line"><span class="pending">○</span><span>Commit changes</span><time>pending</time></div>';
+    }
+    document.querySelectorAll(".fleet-row").forEach((row) => row.addEventListener("click", () => { bSelected = row.dataset.job; document.querySelectorAll(".fleet-row").forEach((r) => r.classList.toggle("selected", r === row)); renderB(); }));
+    document.getElementById("b-action").addEventListener("click", () => { if (bSelected === "64") { bPhase = "done"; const row = document.querySelector('[data-job="64"]'); row.dataset.status = "done"; row.querySelector(".fleet-status").className = "fleet-status done"; row.querySelector(".fleet-task").textContent = "3 effects receipted"; renderB(); } });
+
+    // C — speech anchors drive both the diff focus and the compiled plan state.
+    const utteranceAnchors = [
+      ["Anchor at 00:08", "Voice anchor · “These receipts can match more than one…”"],
+      ["Anchor at 00:31", "Voice anchor · “Tie each receipt to the planned effect identity.”"],
+      ["Anchor at 00:52", "Voice anchor · candidate held for clarification"],
+      ["Directive at 01:06", "Session directive · run framework and recovery tests"],
+    ];
+    const wave = document.getElementById("c-wave");
+    Array.from({length: 78}, (_, i) => { const bar = document.createElement("i"); bar.style.height = `${8 + ((i * 13) % 31)}px`; if (i < 53) bar.classList.add("active"); wave.appendChild(bar); });
+    document.querySelectorAll(".utterance").forEach((button) => button.addEventListener("click", () => { document.querySelectorAll(".utterance").forEach((node) => node.classList.toggle("active", node === button)); const index = Number(button.dataset.utterance); document.querySelector(".diff-head .tiny-label").textContent = utteranceAnchors[index][0]; document.getElementById("c-anchor").textContent = utteranceAnchors[index][1]; document.querySelectorAll(".plan-item").forEach((item, itemIndex) => item.classList.toggle("selected", itemIndex === Math.min(index, 2))); }));
+    let cApplied = false;
+    document.getElementById("c-compile").addEventListener("click", () => { cApplied = !cApplied; document.getElementById("c-state").textContent = cApplied ? "applied locally" : "compiled"; document.getElementById("c-status").textContent = cApplied ? "Two requested Actions applied locally. Eight tests passed; the candidate remains untouched." : "4 utterances compile to 2 requested Actions and 1 candidate. PR-scoped effects fit the active envelope."; document.getElementById("c-compile").textContent = cApplied ? "Reset compiled plan" : "Approve plan & apply"; });
+
+    // D — scope and one-time decisions explicitly reshape the effect hierarchy.
+    const scopeDescriptions = {
+      read: ["Observe", "Read PR and inspect only. All mutating effects ask first."],
+      local: ["Local workspace", "Read, edit, and validate. Commits and GitHub updates ask first."],
+      pr: ["This pull request", "Edit, validate, commit, push, and update PR #64 for this session."],
+      repo: ["Repository session", "Apply available effects across bath/voice-pr during this session."],
+    };
+    let dScope = "local";
+    function renderDScope() {
+      document.getElementById("d-envelope-title").textContent = scopeDescriptions[dScope][0];
+      document.getElementById("d-envelope-copy").textContent = scopeDescriptions[dScope][1];
+      const crosses = dScope === "read" ? "5 effects cross the envelope" : dScope === "local" ? "2 effects cross the envelope" : "All planned effects fit";
+      document.getElementById("d-decision-title").textContent = crosses;
+      document.getElementById("d-decision-copy").textContent = dScope === "read" ? "This envelope is observational. Every edit, test, commit, and push requires a larger scope." : dScope === "local" ? "The code and tests can finish locally. Creating and pushing a commit requires “Update this PR”." : "The five requested effects fit this session’s envelope and remain below the hard ceiling.";
+      const allowed = dScope === "pr" || dScope === "repo";
+      [document.getElementById("d-effect-verdict"), document.getElementById("d-effect-verdict-2")].forEach((node) => { node.className = `effect-verdict ${allowed ? "allowed" : "request"}`; node.textContent = allowed ? "● allowed" : "● asks first"; });
+      document.getElementById("d-top-status").textContent = allowed ? "ready to execute" : "1 decision needed";
+      document.getElementById("d-top-dot").className = `dot ${allowed ? "good" : "warn"}`;
+      document.getElementById("d-state").textContent = allowed ? "authorized" : "awaiting decision";
+    }
+    document.querySelectorAll(".scope-choice").forEach((choice) => choice.addEventListener("click", () => { dScope = choice.dataset.scope; document.querySelectorAll(".scope-choice").forEach((node) => node.classList.toggle("active", node === choice)); renderDScope(); }));
+    document.getElementById("d-grant").addEventListener("click", () => { [document.getElementById("d-effect-verdict"), document.getElementById("d-effect-verdict-2")].forEach((node) => { node.className = "effect-verdict receipted"; node.textContent = "✓ receipted"; }); document.getElementById("d-decision-title").textContent = "Two effects authorized once"; document.getElementById("d-decision-copy").textContent = "The grant is bound to effects E3 and E5 in plan 8ad4f1. It does not expand future sessions."; document.getElementById("d-history-last").innerHTML = "<b>12:41:18</b><br>E3 and E5 authorized once · receipts attached"; document.getElementById("d-top-status").textContent = "5 effects receipted"; document.getElementById("d-top-dot").className = "dot good"; document.getElementById("d-state").textContent = "completed"; });
+    document.getElementById("d-deny").addEventListener("click", () => { [document.getElementById("d-effect-verdict"), document.getElementById("d-effect-verdict-2")].forEach((node) => { node.className = "effect-verdict request"; node.textContent = "○ retained local"; }); document.getElementById("d-decision-title").textContent = "Work retained locally"; document.getElementById("d-decision-copy").textContent = "No external effects occurred. The tested patch remains in the workspace for a later decision."; document.getElementById("d-history-last").innerHTML = "<b>12:41:18</b><br>E3 and E5 denied · local work retained"; document.getElementById("d-top-status").textContent = "external effects denied"; document.getElementById("d-state").textContent = "local only"; });
+
+    activateVariant(new URLSearchParams(location.search).get("variant") || "A");
+  </script>
+</body>
+</html>

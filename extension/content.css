@@ -17,10 +17,10 @@
   --vp-warn: #f85149;
   --vp-amber: #d29922;
   --vp-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-  /* Motion system (shadcn-flavored): one ease for exits/settles, one springy
-     ease for entrances/presses so every surface moves with the same physics. */
-  --vp-ease: cubic-bezier(0.16, 1, 0.3, 1);
-  --vp-ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* One restrained curve with faster exits and calm 180ms entrances. */
+  --vp-ease: cubic-bezier(.23, 1, .32, 1);
+  --vp-enter: 180ms;
+  --vp-exit: 120ms;
   position: fixed;
   right: 20px;
   bottom: 20px;
@@ -66,10 +66,9 @@
   display: inline-flex; align-items: stretch; gap: 0;
   border-radius: 999px; overflow: visible;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  transition: transform 0.2s var(--vp-ease), box-shadow 0.2s var(--vp-ease);
-  animation: vp-pill-in 0.32s var(--vp-ease-spring) both;
+  transition: transform var(--vp-exit) var(--vp-ease), box-shadow var(--vp-enter) var(--vp-ease);
+  animation: vp-pill-in var(--vp-enter) var(--vp-ease) both;
 }
-.vp-pill:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42); }
 .vp-pill:active { transform: translateY(0); }
 .vp-pill-open, .vp-pill-rec {
   display: inline-flex; align-items: center; gap: 8px;
@@ -99,14 +98,14 @@
   font-family: var(--vp-mono); font-size: 10.5px; font-weight: 700;
   font-variant-numeric: tabular-nums; line-height: 1;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
-  animation: vp-badge-pop 0.34s var(--vp-ease-spring) both;
+  animation: vp-badge-pop var(--vp-enter) var(--vp-ease) both;
 }
 @keyframes vp-pill-in {
   from { opacity: 0; transform: translateY(10px) scale(0.94); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 @keyframes vp-badge-pop {
-  from { opacity: 0; transform: scale(0.3); }
+  from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: scale(1); }
 }
 
@@ -127,7 +126,7 @@
   /* Grows out of the pill's bottom-right corner on open. The [hidden] toggle
      flips display none→flex, which replays this each time the panel appears. */
   transform-origin: bottom right;
-  animation: vp-panel-in 0.28s var(--vp-ease) both;
+  animation: vp-panel-in var(--vp-enter) var(--vp-ease) both;
 }
 @keyframes vp-panel-in {
   from { opacity: 0; transform: translateY(12px) scale(0.97); }
@@ -163,7 +162,7 @@
   transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.12s var(--vp-ease);
 }
 .vp-rec:hover { filter: brightness(1.08); }
-.vp-rec:active:not(:disabled) { transform: scale(0.93); }
+.vp-rec:active:not(:disabled) { transform: scale(0.97); }
 .vp-rec.vp-recording {
   background: transparent; border-color: var(--vp-warn); color: var(--vp-warn);
 }
@@ -201,7 +200,7 @@
   transition: filter 0.15s var(--vp-ease), transform 0.12s var(--vp-ease), opacity 0.15s var(--vp-ease);
 }
 .vp-send:hover:not(:disabled) { filter: brightness(1.08); }
-.vp-send:active:not(:disabled) { transform: scale(0.96); }
+.vp-send:active:not(:disabled) { transform: scale(0.97); }
 .vp-send:disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* icon buttons (menu, close) */
@@ -213,7 +212,7 @@
   transition: background 0.15s var(--vp-ease), color 0.15s var(--vp-ease), transform 0.12s var(--vp-ease);
 }
 .vp-icon:hover { background: var(--vp-subtle); color: var(--vp-text); }
-.vp-icon:active { transform: scale(0.9); }
+.vp-icon:active { transform: scale(0.97); }
 .vp-x { font-size: 14px; }
 
 /* overflow menu (holds dev + gaze) */
@@ -225,7 +224,7 @@
   background: var(--vp-elev); border: 1px solid var(--vp-border);
   border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   transform-origin: top right;
-  animation: vp-pop-in 0.16s var(--vp-ease) both;
+  animation: vp-pop-in var(--vp-enter) var(--vp-ease) both;
 }
 @keyframes vp-pop-in {
   from { opacity: 0; transform: translateY(-6px) scale(0.96); }
@@ -241,15 +240,30 @@
 .vp-menu-item:hover { background: var(--vp-subtle); }
 .vp-menu-item.on { color: var(--vp-accent); }
 .vp-menu-item.on::after { content: "✓"; margin-left: auto; color: var(--vp-accent); }
+.vp-action-summary { color: var(--vp-accent); }
 
 /* ---- context strip: chips (badges) --------------------------------------- */
 .vp-context {
   display: flex; flex-wrap: wrap; gap: 6px;
   align-content: flex-start;
-  min-height: 66px; /* reserve 2 chip rows so loading → full never grows */
+  min-height: 42px;
   padding: 9px 10px;
   border-bottom: 1px solid var(--vp-border-soft);
 }
+.vp-scope-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-bottom: 1px solid var(--vp-border-soft);
+  background: color-mix(in srgb, var(--vp-elev) 62%, transparent);
+}
+.vp-scope-control { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.vp-scope-label { color: var(--vp-muted); font-size: 11px; font-weight: 650; }
+.vp-scope-control select {
+  min-width: 0; max-width: 184px; padding: 4px 24px 4px 7px;
+  border: 1px solid var(--vp-border); border-radius: 7px;
+  background: var(--vp-panel); color: var(--vp-text);
+  font: inherit; font-size: 11.5px; cursor: pointer;
+}
+.vp-scope-note { margin-left: auto; color: var(--vp-faint); font-size: 9.5px; white-space: nowrap; }
 .vp-chip {
   font-family: var(--vp-mono); font-size: 11px; line-height: 1.6;
   padding: 1px 7px; border-radius: 6px;
@@ -377,12 +391,12 @@
 
 /* result block (appended when the run reports back) */
 .vp-result {
-  margin-top: 6px; padding: 9px 10px;
-  border: 1px solid var(--vp-border-soft); border-radius: 9px;
-  background: var(--vp-canvas);
-  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 6px; padding: 16px;
+  border-radius: 12px; background: var(--vp-elev);
+  display: flex; flex-direction: column; gap: 9px;
+  animation: vp-receipt-in var(--vp-enter) var(--vp-ease) both;
 }
-.vp-result .headline { font-weight: 650; }
+.vp-result .headline { font-weight: 680; font-size: 14px; line-height: 1.35; }
 .vp-result.ok .headline { color: var(--vp-ok); }
 .vp-result.warn .headline { color: var(--vp-amber); }
 .vp-result .sub {
@@ -391,6 +405,16 @@
 .vp-link { color: var(--vp-accent); text-decoration: none; font-size: 12px; }
 .vp-link:hover { text-decoration: underline; }
 .vp-result .vp-send { align-self: flex-start; }
+.vp-result-exception {
+  display: grid; gap: 3px; padding: 10px 0;
+  border-top: 1px solid var(--vp-border-soft); border-bottom: 1px solid var(--vp-border-soft);
+  color: var(--vp-muted); font-size: 11.5px;
+}
+.vp-result-exception strong { color: var(--vp-amber); font-weight: 650; }
+@keyframes vp-receipt-in {
+  from { opacity: 0; transform: translateY(4px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 /* inline retry / recovery actions live in the log too */
 .vp-log .vp-send { align-self: flex-start; margin-top: 4px; }
@@ -403,28 +427,30 @@
 }
 .vp-secondary:hover { background: var(--vp-subtle); color: var(--vp-text); }
 
-/* ---- dispatch pipeline: a fixed checklist that flips in place ------------- */
-.vp-pipeline { display: flex; flex-direction: column; gap: 1px; padding: 2px 0 4px; }
-.vp-step {
-  display: flex; align-items: center; gap: 9px;
-  padding: 4px 2px; font-size: 12.5px; line-height: 1.4;
+/* ---- dispatch pipeline: one live phase that morphs into the receipt -------- */
+.vp-phase {
+  display: grid; grid-template-columns: 26px 1fr; gap: 11px;
+  align-items: start; margin-top: 6px; padding: 16px;
+  border-radius: 12px; background: var(--vp-elev);
+  animation: vp-receipt-in var(--vp-enter) var(--vp-ease) both;
 }
-.vp-step-mark {
-  flex: none; width: 14px; height: 14px;
-  display: inline-grid; place-items: center; font-size: 12px;
+.vp-phase-spinner {
+  width: 20px; height: 20px; margin-top: 1px; border-radius: 50%;
+  border: 2px solid var(--vp-border); border-top-color: var(--vp-accent);
+  animation: vp-spin .8s linear infinite;
 }
-.vp-step-label { min-width: 0; }
-.vp-step.pending .vp-step-label { color: var(--vp-faint); }
-.vp-step.pending .vp-step-mark::before { content: "○"; color: var(--vp-faint); }
-.vp-step.active .vp-step-label { color: var(--vp-text); font-weight: 550; }
-.vp-step.active .vp-step-mark {
-  border: 2px solid var(--vp-border-soft); border-top-color: var(--vp-accent);
-  border-radius: 50%; animation: vp-spin 0.7s linear infinite;
+.vp-phase.blocked .vp-phase-spinner { animation: none; border-color: var(--vp-amber); }
+.vp-phase.blocked .vp-phase-spinner::after { content: "!"; display: grid; place-items: center; height: 100%; color: var(--vp-amber); font-size: 11px; font-weight: 800; }
+.vp-phase-copy { min-width: 0; display: grid; gap: 3px; }
+.vp-phase-name { color: var(--vp-accent); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.vp-phase.blocked .vp-phase-name { color: var(--vp-amber); }
+.vp-phase-title { color: var(--vp-text); font-size: 13.5px; font-weight: 650; }
+.vp-phase-detail { color: var(--vp-muted); font-size: 11px; line-height: 1.45; }
+.vp-phase-telemetry {
+  grid-column: 2; max-height: 90px; overflow: auto; padding-top: 7px;
+  border-top: 1px solid var(--vp-border-soft); color: var(--vp-faint);
+  font: 10px/1.55 var(--vp-mono);
 }
-.vp-step.done .vp-step-label { color: var(--vp-text); }
-.vp-step.done .vp-step-mark::before { content: "✓"; color: var(--vp-ok); font-weight: 700; }
-.vp-step.fail .vp-step-label { color: var(--vp-warn); }
-.vp-step.fail .vp-step-mark::before { content: "✕"; color: var(--vp-warn); font-weight: 700; }
 @keyframes vp-spin { to { transform: rotate(360deg); } }
 
 /* ---- dev sections: preflight + attention HUD (hidden unless dev view) ----- */
@@ -468,7 +494,11 @@
   100% { background-position: -200% 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #voicepr-root *, #vp-gazedot, #vp-laser { animation: none !important; transition: none !important; scroll-behavior: auto; }
+  #voicepr-root *, #vp-gazedot, #vp-laser {
+    animation-duration: 1ms !important; animation-iteration-count: 1 !important;
+    transition-property: opacity, color, background-color, border-color !important;
+    transition-duration: var(--vp-exit) !important; scroll-behavior: auto;
+  }
   .vp-clock.live::before, .vp-clock.waiting::before { animation: none; }
 }
 
@@ -541,7 +571,7 @@
 }
 .vp-hubjob:hover {
   border-color: var(--vp-border); background: var(--vp-subtle);
-  transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
 }
 .vp-hubjob:active { transform: translateY(0); }
 .vp-hubjob.self {
@@ -616,31 +646,21 @@
     color 0.15s var(--vp-ease), transform 0.12s var(--vp-ease);
 }
 .vp-hubbtn:hover { filter: brightness(1.1); }
-.vp-hubbtn:active { transform: scale(0.96); }
+.vp-hubbtn:active { transform: scale(0.97); }
 .vp-hubbtn.ghost {
   background: transparent; color: var(--vp-muted);
   border: 1px solid var(--vp-border);
 }
 .vp-hubbtn.ghost:hover { background: var(--vp-subtle); color: var(--vp-text); filter: none; }
 
-/* ---- hub entrance: a one-shot staggered reveal ---------------------------- */
-/* Gated by .vp-enter, which content.js adds ONLY on a fresh open — never on the
-   live re-renders a running job triggers, so the fleet doesn't re-slam into view
-   every time a status ticks. The record CTA, this-PR card, section label, and
-   fleet list rise in sequence; then the rows inside the list stagger. */
+/* ---- hub entrance: one calm reveal, without a page-wide stagger ------------ */
 @keyframes vp-rise {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
 }
-.vp-hub.vp-enter > * { animation: vp-rise 0.3s var(--vp-ease) both; }
-.vp-hub.vp-enter > *:nth-child(1) { animation-delay: 0.02s; }
-.vp-hub.vp-enter > *:nth-child(2) { animation-delay: 0.07s; }
-.vp-hub.vp-enter > *:nth-child(3) { animation-delay: 0.12s; }
-.vp-hub.vp-enter > *:nth-child(4) { animation-delay: 0.17s; }
-.vp-hub.vp-enter .vp-hub-list .vp-hubjob { animation: vp-rise 0.3s var(--vp-ease) both; }
-.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(1) { animation-delay: 0.18s; }
-.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(2) { animation-delay: 0.24s; }
-.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(3) { animation-delay: 0.30s; }
-.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(4) { animation-delay: 0.36s; }
-.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(5) { animation-delay: 0.42s; }
-.vp-hub.vp-enter .vp-hub-list .vp-hubjob:nth-child(n + 6) { animation-delay: 0.48s; }
+.vp-hub.vp-enter { animation: vp-rise var(--vp-enter) var(--vp-ease) both; }
+
+@media (hover: hover) and (pointer: fine) {
+  .vp-pill:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42); }
+  .vp-hubjob:hover { transform: translateY(-1px); }
+}

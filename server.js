@@ -76,6 +76,7 @@ async function handleDispatch(req, res) {
     audioStartMs = 0,
     typedSegments = [],
     recordingStoppedAt = null,
+    autonomyLevel = "current_pr",
   } = input;
   const sid = sessionId || `anon-${Date.now()}`;
 
@@ -142,7 +143,12 @@ async function handleDispatch(req, res) {
         segs = [...anchored, ...segs];
       }
       if (!segs.length) throw new Error("nothing captured — no speech and no typed comments");
-      result = await runSession({ sessionId: sid, prRef, segments: segs }, send);
+      result = await runSession(
+        { sessionId: sid, prRef, segments: segs, autonomyLevel },
+        send
+      );
+      if (sessionId && result.actionPlan)
+        await saveJson(sessionId, "action-plan.json", result.actionPlan);
       result.metrics = {
         ...(result.metrics || {}),
         dispatchReceivedAt,

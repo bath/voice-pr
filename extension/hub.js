@@ -178,6 +178,17 @@
               : ""),
         }),
       ]);
+      if (job.actionSummary)
+        card.appendChild(
+          el("div", {
+            class: "vp-hubcard-sub vp-action-summary",
+            text:
+              `${job.actionSummary.totalActions || 0} action${job.actionSummary.totalActions === 1 ? "" : "s"}` +
+              (job.actionSummary.blockedEffects
+                ? ` · ${job.actionSummary.blockedEffects} ${job.actionSummary.blockedEffects === 1 ? "needs" : "need"} permission`
+                : " · all authorized"),
+          })
+        );
       if (job.trailCommentUrl)
         card.appendChild(
           el("a", { class: "vp-hublink", href: job.trailCommentUrl, target: "_blank", rel: "noopener", text: "see the comment on the PR →" })

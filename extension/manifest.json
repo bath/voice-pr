@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://github.com/*/*/pull/*"],
-      "js": ["anchors.js", "recovery.js", "hub.js", "timer.js", "content.js"],
+      "js": ["anchors.js", "recovery.js", "hub.js", "timer.js", "authorization.js", "receipt.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

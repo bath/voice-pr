@@ -244,6 +244,7 @@ function patchForEvent(ev) {
       agentId: d.agentId ?? null,
       runId: d.runId ?? null,
       metrics: d.metrics ?? null,
+      actionSummary: d.actionSummary ?? null,
       trailCommentUrl: d.trailCommentUrl ?? null,
       trailCommentPending: d.trailCommentPending ?? false,
     };
@@ -260,7 +261,13 @@ function patchForEvent(ev) {
     case "agent-ready": return { status: "running", label: d.warmWaitMs ? `Agent ready · waited ${(d.warmWaitMs / 1000).toFixed(1)}s` : "Agent ready" };
     case "interpreting": return { status: "running", label: "Interpreting requests…" };
     case "agent-running": return { status: "running", label: "Agent editing and validating…", agentId: d.agentId ?? null, runId: d.runId ?? null };
+    case "actions-compiled": return {
+      status: "running",
+      label: `${d.totalActions ?? 0} action${d.totalActions === 1 ? "" : "s"} compiled${d.blockedEffects ? ` · ${d.blockedEffects} ${d.blockedEffects === 1 ? "needs" : "need"} permission` : ""}`,
+      actionSummary: d,
+    };
     case "agent-pushing": return { status: "running", label: `Pushing to ${d.branch || "PR branch"}…` };
+    case "agent-push-blocked": return { status: "running", label: "Prepared locally · push needs permission" };
     case "agent-finished": return { status: "running", label: d.commits ? `Pushed ${d.commits} commit${d.commits === 1 ? "" : "s"}` : "Review complete" };
     case "comment-queued": return { status: "running", label: "Intent trail posting…" };
     case "commenting": return { status: "running", label: "Posting intent trail…" };

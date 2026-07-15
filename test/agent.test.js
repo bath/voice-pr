@@ -20,6 +20,7 @@ function harness({
   preparedHead = null,
   warmSetupDelayMs = 0,
   warmHeartbeatMs = 1_000,
+  skipActionPlan = false,
 } = {}) {
   const prompts = [];
   const sendOptions = [];
@@ -43,7 +44,44 @@ function harness({
         async wait() {
           if (warm && warmSetupDelayMs)
             await new Promise((resolve) => setTimeout(resolve, warmSetupDelayMs));
-          if (!warm) committed = true;
+          if (!warm) {
+            if (!skipActionPlan) {
+              await options.local.customTools.record_action_plan.execute({
+                schemaVersion: 1,
+                directives: [],
+                actions: [
+                  {
+                    ref: "retry-backoff",
+                    objective: "Add retry backoff",
+                    sourceSegmentIndexes: [0],
+                    target: { file: "lib/net.js", line: 12 },
+                    constraints: [],
+                    acceptance: ["Focused retry tests pass"],
+                    intentStrength: "requested",
+                    dependsOn: [],
+                    effects: [
+                      { ref: "edit", capability: "edit_workspace", summary: "Edit retry logic" },
+                      { ref: "test", capability: "run_validation", summary: "Run retry tests" },
+                      { ref: "commit", capability: "create_commit", summary: "Commit retry logic" },
+                      { ref: "push", capability: "push_current_pr", summary: "Push current PR" },
+                      { ref: "trail", capability: "update_current_pr", summary: "Post intent trail" },
+                    ],
+                  },
+                ],
+                operations: [
+                  {
+                    ref: "create-retry",
+                    kind: "create",
+                    actionRef: "retry-backoff",
+                    sourceSegmentIndexes: [0],
+                    summary: "Create requested retry outcome",
+                  },
+                ],
+                findings: [],
+              });
+            }
+            committed = true;
+          }
           return warm
             ? { id: "warm-run", status: "finished", result: "READY" }
             : {
@@ -117,6 +155,10 @@ function harness({
       };
     },
     runCommand,
+    actionStore: {
+      async listOpen() { return []; },
+      async record() {},
+    },
   });
   return {
     runtime,
@@ -253,9 +295,12 @@ test("execute reuses the warm agent for interpretation, edits, validation, commi
   assert.match(prompts[0], /Interpretation harness/);
   assert.equal(sendOptions[0].mode, "agent");
   assert.match(sendOptions[0].idempotencyKey, /:execute$/);
+  assert.equal(typeof sendOptions[0].local.customTools.record_action_plan.execute, "function");
   assert.equal(result.status, "done");
   assert.equal(result.agentId, "agent-1");
   assert.equal(result.commits.length, 1);
+  assert.equal(result.published, true);
+  assert.equal(result.actionSummary.totalActions, 1);
   assert.equal(result.commits[0].oid, "b".repeat(40));
   assert.ok(
     commands.some((call) =>
@@ -267,6 +312,7 @@ test("execute reuses the warm agent for interpretation, edits, validation, commi
   );
   assert.ok(commands.some((call) => call.args[0] === "ls-remote"));
   assert.ok(events.some((event) => event.stage === "agent-ready"));
+  assert.ok(events.some((event) => event.stage === "actions-compiled"));
   assert.ok(events.some((event) => event.stage === "agent-finished"));
   assert.equal(disposed(), 1);
 });
@@ -315,6 +361,38 @@ test("execute performs only one inference turn after staging", async () => {
   assert.equal(sendOptions[0].mode, "agent");
   assert.match(prompts[0], /only inference turn/i);
   assert.equal(result.metrics.inferenceTurnsBeforeStop, 0);
+  await runtime.shutdown();
+});
+
+test("local-workspace autonomy prepares commits without publishing", async () => {
+  const { runtime, commands } = harness();
+  const events = [];
+  const result = await runtime.execute({
+    sessionId: "local-only",
+    pr,
+    context: {},
+    segments,
+    autonomyLevel: "local_workspace",
+    emit: (stage, detail) => events.push({ stage, detail }),
+  });
+  assert.equal(result.commits.length, 1);
+  assert.equal(result.published, false);
+  assert.equal(result.localWorkspaceRetained, true);
+  assert.match(result.workspace, /local-only$/);
+  assert.ok(events.some((event) => event.stage === "agent-push-blocked"));
+  assert.ok(!commands.some((call) => call.args.includes("push")));
+  assert.ok(!commands.some((call) => call.args.includes("worktree") && call.args.includes("remove")));
+  await runtime.shutdown();
+  assert.ok(commands.some((call) => call.args.includes("worktree") && call.args.includes("remove")));
+});
+
+test("missing Action Plans prevent publication", async () => {
+  const { runtime, commands } = harness({ skipActionPlan: true });
+  await assert.rejects(
+    runtime.execute({ sessionId: "missing-plan", pr, context: {}, segments }),
+    /without recording the required Action Plan/
+  );
+  assert.ok(!commands.some((call) => call.args.includes("push")));
   await runtime.shutdown();
 });
 

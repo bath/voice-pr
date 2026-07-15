@@ -1,0 +1,1492 @@
+<!doctype html>
+<!--
+  PROTOTYPE — throw away after the framework's visual language is chosen.
+  Question: Which visualization best explains how natural vocal commentary
+  progressively creates, revises, authorizes, and resolves developer actions?
+  Three variants are switchable with ?variant=A, ?variant=B, or ?variant=C.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>voice-pr · commentary to actions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #f4f7fb;
+        --muted: #8d98a8;
+        --faint: #667182;
+        --canvas: #090c11;
+        --panel: #10151d;
+        --panel-2: #151b25;
+        --line: #273142;
+        --line-soft: #1d2633;
+        --blue: #6da2ff;
+        --blue-2: #2f6feb;
+        --green: #63d48a;
+        --amber: #f0bf65;
+        --red: #ff786e;
+        --violet: #bd8cff;
+        --cyan: #59d9d1;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      html { min-width: 320px; background: var(--canvas); }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        background:
+          radial-gradient(circle at 16% -10%, rgba(61, 112, 205, .17), transparent 34rem),
+          var(--canvas);
+        color: var(--ink);
+        font-family: var(--sans);
+      }
+      button { font: inherit; }
+      button:focus-visible, [tabindex]:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 3px;
+      }
+      .prototype-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--blue);
+        font: 700 11px/1 var(--mono);
+        letter-spacing: .12em;
+        text-transform: uppercase;
+      }
+      .prototype-label::before {
+        width: 7px;
+        height: 7px;
+        content: "";
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 0 4px rgba(109, 162, 255, .12);
+      }
+      .variant-root { min-height: 100vh; }
+      .variant-shell {
+        width: min(1480px, calc(100% - 48px));
+        margin: 0 auto;
+        padding: 42px 0 112px;
+      }
+      .page-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 32px;
+        margin-bottom: 36px;
+      }
+      .page-head h1 {
+        max-width: 820px;
+        margin: 14px 0 12px;
+        font-size: clamp(34px, 4vw, 62px);
+        line-height: .98;
+        letter-spacing: -.055em;
+      }
+      .page-head p {
+        max-width: 720px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.6;
+      }
+      .head-note {
+        max-width: 270px;
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(16, 21, 29, .72);
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .head-note strong {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--ink);
+        font-size: 12px;
+      }
+
+      /* Shared prototype switcher — intentionally unlike the content. */
+      .prototype-switcher {
+        position: fixed;
+        z-index: 100;
+        bottom: 22px;
+        left: 50%;
+        display: grid;
+        grid-template-columns: 38px minmax(210px, auto) 38px;
+        align-items: center;
+        gap: 4px;
+        padding: 5px;
+        transform: translateX(-50%);
+        border: 1px solid rgba(255, 255, 255, .19);
+        border-radius: 999px;
+        background: rgba(5, 7, 10, .92);
+        box-shadow: 0 15px 50px rgba(0, 0, 0, .5);
+        backdrop-filter: blur(18px);
+      }
+      .prototype-switcher button {
+        width: 38px;
+        height: 38px;
+        border: 0;
+        border-radius: 50%;
+        background: transparent;
+        color: #fff;
+        cursor: pointer;
+      }
+      .prototype-switcher button:hover { background: rgba(255, 255, 255, .1); }
+      .switcher-copy {
+        padding: 0 12px;
+        text-align: center;
+      }
+      .switcher-copy strong {
+        display: block;
+        color: #fff;
+        font-size: 12px;
+      }
+      .switcher-copy span {
+        display: block;
+        margin-top: 1px;
+        color: #8994a3;
+        font: 10px/1.25 var(--mono);
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* VARIANT A — compiler map                                           */
+      /* ------------------------------------------------------------------ */
+      .compiler-grid {
+        display: grid;
+        grid-template-columns: minmax(310px, 1.05fr) minmax(230px, .72fr) minmax(360px, 1.22fr);
+        gap: 18px;
+        align-items: stretch;
+      }
+      .map-panel {
+        min-height: 580px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: rgba(16, 21, 29, .88);
+        box-shadow: 0 20px 60px rgba(0, 0, 0, .2);
+      }
+      .map-panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 2px 2px 15px;
+        border-bottom: 1px solid var(--line-soft);
+      }
+      .map-panel-head h2 {
+        margin: 0;
+        font-size: 14px;
+        letter-spacing: -.01em;
+      }
+      .map-panel-head span {
+        color: var(--faint);
+        font: 10px var(--mono);
+        text-transform: uppercase;
+      }
+      .utterance-list {
+        display: grid;
+        gap: 9px;
+        margin-top: 14px;
+      }
+      .utterance {
+        position: relative;
+        width: 100%;
+        padding: 14px 14px 13px 48px;
+        border: 1px solid transparent;
+        border-radius: 12px;
+        background: var(--panel-2);
+        color: var(--ink);
+        text-align: left;
+        cursor: pointer;
+        transition: border-color .18s, transform .18s, background .18s;
+      }
+      .utterance:hover { transform: translateX(3px); border-color: #3a4658; }
+      .utterance.active {
+        border-color: var(--blue);
+        background: rgba(47, 111, 235, .12);
+      }
+      .utterance-num {
+        position: absolute;
+        top: 13px;
+        left: 13px;
+        display: grid;
+        width: 23px;
+        height: 23px;
+        place-items: center;
+        border-radius: 7px;
+        background: #202938;
+        color: var(--muted);
+        font: 10px var(--mono);
+      }
+      .utterance.active .utterance-num {
+        background: var(--blue-2);
+        color: #fff;
+      }
+      .utterance blockquote {
+        margin: 0 0 9px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .op-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+      .op-chip {
+        padding: 4px 6px;
+        border: 1px solid #334054;
+        border-radius: 5px;
+        color: #9eabba;
+        font: 700 9px/1 var(--mono);
+        letter-spacing: .05em;
+        text-transform: uppercase;
+      }
+      .utterance.active .op-chip {
+        border-color: rgba(109, 162, 255, .38);
+        color: #b9d1ff;
+      }
+      .compiler-core {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 580px;
+        padding: 26px 16px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background:
+          linear-gradient(rgba(255, 255, 255, .025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, .025) 1px, transparent 1px),
+          rgba(12, 16, 23, .88);
+        background-size: 22px 22px;
+      }
+      .core-kicker {
+        margin-bottom: 13px;
+        color: var(--blue);
+        font: 10px var(--mono);
+        text-align: center;
+        text-transform: uppercase;
+      }
+      .core-node {
+        padding: 14px;
+        border: 1px solid #354155;
+        border-radius: 12px;
+        background: #121925;
+        text-align: center;
+      }
+      .core-node strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 12px;
+      }
+      .core-node span {
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.35;
+      }
+      .core-arrow {
+        height: 31px;
+        color: var(--faint);
+        font: 16px/31px var(--mono);
+        text-align: center;
+      }
+      .compile-readout {
+        min-height: 91px;
+        margin-top: 18px;
+        padding: 13px;
+        border: 1px solid rgba(109, 162, 255, .24);
+        border-radius: 10px;
+        background: rgba(47, 111, 235, .08);
+      }
+      .compile-readout b {
+        display: block;
+        margin-bottom: 6px;
+        color: var(--blue);
+        font: 10px var(--mono);
+        text-transform: uppercase;
+      }
+      .compile-readout p {
+        margin: 0;
+        color: #c5cedb;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      .slot-stack {
+        display: grid;
+        gap: 11px;
+        margin-top: 14px;
+      }
+      .action-slot {
+        position: relative;
+        display: grid;
+        grid-template-columns: 40px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: var(--panel-2);
+        opacity: .42;
+        transition: opacity .2s, border-color .2s, transform .2s, box-shadow .2s;
+      }
+      .action-slot.related {
+        border-color: var(--slot-color);
+        opacity: 1;
+        transform: translateX(-4px);
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--slot-color) 20%, transparent);
+      }
+      .action-slot.always-visible { opacity: .78; }
+      .slot-icon {
+        display: grid;
+        width: 40px;
+        height: 40px;
+        place-items: center;
+        border-radius: 11px;
+        background: color-mix(in srgb, var(--slot-color) 14%, transparent);
+        color: var(--slot-color);
+        font: 18px var(--mono);
+      }
+      .slot-kind {
+        color: var(--slot-color);
+        font: 700 9px/1.2 var(--mono);
+        letter-spacing: .07em;
+        text-transform: uppercase;
+      }
+      .slot-title {
+        margin: 5px 0;
+        font-size: 13px;
+        font-weight: 650;
+      }
+      .slot-meta {
+        color: var(--muted);
+        font-size: 10.5px;
+        line-height: 1.45;
+      }
+      .slot-state {
+        padding: 4px 6px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        color: var(--faint);
+        font: 9px var(--mono);
+        text-transform: uppercase;
+      }
+      .slot-change { --slot-color: var(--green); }
+      .slot-investigate { --slot-color: var(--amber); }
+      .slot-follow { --slot-color: var(--violet); }
+      .slot-route { --slot-color: var(--cyan); }
+      .commitment-strip {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 2px;
+        margin-top: 18px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--line);
+      }
+      .commit-state {
+        position: relative;
+        min-height: 88px;
+        padding: 17px 14px;
+        background: #0f141c;
+      }
+      .commit-state::after {
+        position: absolute;
+        top: 50%;
+        right: -7px;
+        z-index: 2;
+        content: "›";
+        color: var(--faint);
+        font-size: 18px;
+        transform: translateY(-50%);
+      }
+      .commit-state:last-child::after { content: none; }
+      .commit-state b {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 11px;
+      }
+      .commit-state span {
+        color: var(--muted);
+        font-size: 9.5px;
+        line-height: 1.35;
+      }
+      .commit-state.authorized {
+        background: rgba(47, 111, 235, .14);
+        box-shadow: inset 0 2px 0 var(--blue);
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* VARIANT B — embedded action tape                                   */
+      /* ------------------------------------------------------------------ */
+      .github-stage {
+        min-height: 760px;
+        overflow: hidden;
+        border: 1px solid #30363d;
+        border-radius: 16px;
+        background: #0d1117;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, .42);
+      }
+      .gh-top {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        height: 62px;
+        padding: 0 22px;
+        border-bottom: 1px solid #21262d;
+        background: #010409;
+      }
+      .gh-mark {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border-radius: 50%;
+        background: #f0f6fc;
+        color: #010409;
+        font-weight: 900;
+      }
+      .gh-path { color: #c9d1d9; font-size: 13px; }
+      .gh-path b { color: #f0f6fc; }
+      .gh-search {
+        width: 250px;
+        height: 30px;
+        margin-left: auto;
+        border: 1px solid #30363d;
+        border-radius: 7px;
+        color: #6e7681;
+        font-size: 11px;
+        line-height: 28px;
+        padding: 0 11px;
+      }
+      .pr-head {
+        padding: 22px 28px 0;
+        border-bottom: 1px solid #21262d;
+      }
+      .pr-title {
+        margin: 0;
+        color: #e6edf3;
+        font-size: 25px;
+        font-weight: 450;
+        letter-spacing: -.025em;
+      }
+      .pr-title span { color: #7d8590; font-weight: 350; }
+      .pr-summary {
+        margin-top: 11px;
+        color: #8b949e;
+        font-size: 12px;
+      }
+      .pr-open {
+        display: inline-flex;
+        margin-right: 7px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: #238636;
+        color: #fff;
+        font-weight: 650;
+      }
+      .pr-tabs {
+        display: flex;
+        gap: 24px;
+        margin-top: 22px;
+      }
+      .pr-tab {
+        padding: 10px 0 13px;
+        color: #8b949e;
+        font-size: 12px;
+      }
+      .pr-tab.active {
+        border-bottom: 2px solid #f78166;
+        color: #e6edf3;
+      }
+      .pr-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 390px;
+        gap: 24px;
+        padding: 22px 28px 34px;
+      }
+      .diff-file {
+        overflow: hidden;
+        border: 1px solid #30363d;
+        border-radius: 9px;
+      }
+      .diff-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 43px;
+        padding: 0 14px;
+        border-bottom: 1px solid #30363d;
+        background: #161b22;
+        color: #c9d1d9;
+        font: 11px var(--mono);
+      }
+      .diff-stat {
+        display: flex;
+        gap: 2px;
+        margin-left: auto;
+      }
+      .diff-stat i {
+        width: 8px;
+        height: 8px;
+        background: #238636;
+      }
+      .code-row {
+        display: grid;
+        grid-template-columns: 40px 40px 22px minmax(0, 1fr);
+        min-height: 27px;
+        font: 11px/27px var(--mono);
+      }
+      .code-row > span { border-right: 1px solid rgba(240, 246, 252, .06); }
+      .ln {
+        padding-right: 9px;
+        color: #6e7681;
+        text-align: right;
+        user-select: none;
+      }
+      .sign { color: #8b949e; text-align: center; }
+      .code {
+        overflow: hidden;
+        padding: 0 12px;
+        color: #c9d1d9;
+        white-space: pre;
+      }
+      .code-row.add { background: rgba(46, 160, 67, .15); }
+      .code-row.add .ln, .code-row.add .sign { background: rgba(46, 160, 67, .09); }
+      .code-row.focused {
+        position: relative;
+        box-shadow: inset 3px 0 0 var(--blue);
+        background: rgba(56, 139, 253, .13);
+      }
+      .diff-context {
+        margin-top: 16px;
+        padding: 15px;
+        border: 1px solid #30363d;
+        border-radius: 9px;
+        color: #8b949e;
+        font-size: 11px;
+        line-height: 1.55;
+      }
+      .diff-context strong { color: #c9d1d9; }
+      .voice-panel {
+        position: sticky;
+        top: 16px;
+        align-self: start;
+        overflow: hidden;
+        border: 1px solid #3a4556;
+        border-radius: 13px;
+        background: #161b22;
+        box-shadow: 0 20px 55px rgba(0, 0, 0, .45);
+      }
+      .voice-bar {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        height: 49px;
+        padding: 0 13px;
+        border-bottom: 1px solid #30363d;
+        background: #1c2128;
+      }
+      .record-dot {
+        width: 22px;
+        height: 22px;
+        border: 1px solid rgba(255, 120, 110, .5);
+        border-radius: 7px;
+        color: var(--red);
+        font-size: 10px;
+        line-height: 20px;
+        text-align: center;
+      }
+      .voice-brand { font-size: 12px; font-weight: 680; }
+      .voice-time {
+        margin-left: auto;
+        color: #8b949e;
+        font: 10px var(--mono);
+      }
+      .voice-body { padding: 13px; }
+      .location-chip {
+        display: inline-flex;
+        padding: 5px 7px;
+        border: 1px solid rgba(109, 162, 255, .3);
+        border-radius: 5px;
+        color: #9fc0ff;
+        background: rgba(47, 111, 235, .08);
+        font: 9px var(--mono);
+      }
+      .tape-label {
+        display: flex;
+        justify-content: space-between;
+        margin: 14px 0 8px;
+        color: #8b949e;
+        font: 9px var(--mono);
+        letter-spacing: .06em;
+        text-transform: uppercase;
+      }
+      .tape-count { color: var(--blue); }
+      .spoken-feed {
+        min-height: 115px;
+        max-height: 145px;
+        overflow: auto;
+        padding: 9px;
+        border: 1px solid #262f3c;
+        border-radius: 8px;
+        background: #0d1117;
+      }
+      .spoken-line {
+        display: none;
+        gap: 8px;
+        padding: 6px 4px;
+        color: #aeb8c5;
+        font-size: 10.5px;
+        line-height: 1.45;
+      }
+      .spoken-line.visible { display: flex; }
+      .spoken-line.latest { color: #f0f6fc; }
+      .spoken-line em {
+        flex: none;
+        color: #6e7681;
+        font: normal 9px var(--mono);
+      }
+      .action-tape {
+        display: grid;
+        gap: 7px;
+        min-height: 183px;
+      }
+      .tape-empty {
+        display: grid;
+        min-height: 183px;
+        place-items: center;
+        border: 1px dashed #30363d;
+        border-radius: 9px;
+        color: #6e7681;
+        font-size: 11px;
+        text-align: center;
+      }
+      .tape-action {
+        display: none;
+        grid-template-columns: 26px minmax(0, 1fr) auto;
+        gap: 9px;
+        align-items: center;
+        padding: 10px;
+        border: 1px solid #30363d;
+        border-radius: 9px;
+        background: #1c2128;
+      }
+      .tape-action.visible { display: grid; animation: action-in .25s ease both; }
+      .tape-action.cancelled { opacity: .48; }
+      .tape-action.cancelled .tape-action-title { text-decoration: line-through; }
+      @keyframes action-in {
+        from { opacity: 0; transform: translateY(5px); }
+      }
+      .tape-symbol {
+        display: grid;
+        width: 26px;
+        height: 26px;
+        place-items: center;
+        border-radius: 7px;
+        background: rgba(109, 162, 255, .1);
+        color: var(--blue);
+        font: 12px var(--mono);
+      }
+      .tape-action-type {
+        color: #8b949e;
+        font: 8px var(--mono);
+        letter-spacing: .06em;
+        text-transform: uppercase;
+      }
+      .tape-action-title {
+        margin-top: 3px;
+        color: #e6edf3;
+        font-size: 10.5px;
+      }
+      .tape-action-state {
+        color: #7d8590;
+        font: 8px var(--mono);
+        text-transform: uppercase;
+      }
+      .voice-controls {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .next-statement, .reset-demo {
+        border: 0;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .next-statement {
+        padding: 10px 12px;
+        background: var(--blue-2);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 650;
+      }
+      .reset-demo {
+        padding: 0 11px;
+        border: 1px solid #30363d;
+        background: transparent;
+        color: #8b949e;
+        font-size: 10px;
+      }
+      .demo-hint {
+        margin-top: 8px;
+        color: #6e7681;
+        font-size: 9px;
+        text-align: center;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* VARIANT C — operation × slot matrix                                */
+      /* ------------------------------------------------------------------ */
+      .matrix-variant {
+        min-height: 100vh;
+        background: #f2f0e9;
+        color: #1c2228;
+      }
+      .matrix-variant .variant-shell { width: min(1440px, calc(100% - 56px)); }
+      .matrix-variant .prototype-label { color: #245bc7; }
+      .matrix-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        gap: 60px;
+        align-items: end;
+        margin-bottom: 40px;
+        padding-bottom: 28px;
+        border-bottom: 2px solid #1c2228;
+      }
+      .matrix-head h1 {
+        max-width: 780px;
+        margin: 16px 0 0;
+        font: 650 clamp(40px, 5vw, 72px)/.96 Georgia, "Times New Roman", serif;
+        letter-spacing: -.05em;
+      }
+      .matrix-deck {
+        margin: 0;
+        color: #606871;
+        font-size: 14px;
+        line-height: 1.55;
+      }
+      .matrix-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 310px;
+        gap: 28px;
+        align-items: start;
+      }
+      .matrix-wrap {
+        overflow: auto;
+        border: 1px solid #c3c4bd;
+        background: #faf9f5;
+      }
+      .matrix {
+        display: grid;
+        grid-template-columns: 148px repeat(7, minmax(94px, 1fr));
+        min-width: 880px;
+      }
+      .matrix > * {
+        min-height: 78px;
+        padding: 11px;
+        border-right: 1px solid #d5d5ce;
+        border-bottom: 1px solid #d5d5ce;
+      }
+      .matrix > :nth-child(8n) { border-right: 0; }
+      .matrix-corner {
+        display: flex;
+        align-items: flex-end;
+        color: #787f85;
+        font: 10px var(--mono);
+        text-transform: uppercase;
+      }
+      .matrix-col {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end;
+        gap: 5px;
+      }
+      .matrix-col b { font-size: 11px; }
+      .matrix-col span {
+        color: #81878b;
+        font: 9px/1.25 var(--mono);
+      }
+      .matrix-row {
+        width: 100%;
+        border: 0;
+        background: #f0eee6;
+        color: #1c2228;
+        text-align: left;
+        cursor: pointer;
+      }
+      .matrix-row:hover, .matrix-row.active {
+        background: #1c2228;
+        color: #fff;
+      }
+      .matrix-row b {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 12px;
+      }
+      .matrix-row span {
+        color: #71787d;
+        font: 9px/1.35 var(--mono);
+      }
+      .matrix-row.active span { color: #b8bdc1; }
+      .matrix-cell {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #faf9f5;
+        transition: background .15s, opacity .15s;
+      }
+      .matrix-cell::before {
+        width: 7px;
+        height: 7px;
+        content: "";
+        border: 1px solid #cbc9c0;
+        border-radius: 50%;
+      }
+      .matrix-cell.hit::before {
+        width: 15px;
+        height: 15px;
+        border: 0;
+        background: var(--dot, #245bc7);
+        box-shadow: 0 0 0 5px color-mix(in srgb, var(--dot, #245bc7) 14%, transparent);
+      }
+      .matrix-cell.focused { background: #e9effc; }
+      .matrix-cell.dimmed { opacity: .2; }
+      .matrix-cell small {
+        position: absolute;
+        right: 5px;
+        bottom: 5px;
+        color: #8a8e90;
+        font: 7px var(--mono);
+      }
+      .matrix-inspector {
+        position: sticky;
+        top: 24px;
+        padding: 22px;
+        border-top: 5px solid #245bc7;
+        background: #1c2228;
+        color: #f5f3ec;
+      }
+      .inspector-index {
+        color: #8db2ff;
+        font: 10px var(--mono);
+        text-transform: uppercase;
+      }
+      .matrix-inspector h2 {
+        margin: 14px 0 11px;
+        font: 500 28px/1.05 Georgia, "Times New Roman", serif;
+      }
+      .matrix-inspector p {
+        margin: 0 0 22px;
+        color: #b7bdc2;
+        font-size: 12px;
+        line-height: 1.55;
+      }
+      .inspector-example {
+        padding: 14px;
+        border-left: 2px solid #6da2ff;
+        background: rgba(255, 255, 255, .06);
+        color: #fff;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+      .inspector-routes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 16px;
+      }
+      .inspector-routes span {
+        padding: 5px 7px;
+        border: 1px solid #4a5259;
+        border-radius: 999px;
+        color: #d3d7da;
+        font: 9px var(--mono);
+      }
+      .matrix-principle {
+        display: grid;
+        grid-template-columns: 190px 1fr;
+        gap: 22px;
+        margin-top: 30px;
+        padding-top: 24px;
+        border-top: 1px solid #bbbcb7;
+      }
+      .matrix-principle b {
+        font: 11px var(--mono);
+        text-transform: uppercase;
+      }
+      .matrix-principle p {
+        max-width: 820px;
+        margin: 0;
+        color: #555d63;
+        font: 24px/1.25 Georgia, "Times New Roman", serif;
+      }
+
+      @media (max-width: 1000px) {
+        .compiler-grid { grid-template-columns: 1fr; }
+        .map-panel, .compiler-core { min-height: auto; }
+        .compiler-core { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; }
+        .core-kicker, .compile-readout { grid-column: 1 / -1; }
+        .core-arrow { height: auto; line-height: normal; transform: rotate(-90deg); }
+        .pr-body { grid-template-columns: 1fr; }
+        .voice-panel { position: static; }
+        .matrix-layout { grid-template-columns: 1fr; }
+        .matrix-inspector { position: static; }
+      }
+      @media (max-width: 700px) {
+        .variant-shell, .matrix-variant .variant-shell { width: min(100% - 28px, 1480px); padding-top: 26px; }
+        .page-head, .matrix-head { grid-template-columns: 1fr; flex-direction: column; }
+        .head-note { max-width: none; }
+        .commitment-strip { grid-template-columns: 1fr 1fr; }
+        .pr-body { padding: 14px; }
+        .gh-search { display: none; }
+        .pr-head { padding-left: 16px; padding-right: 16px; }
+        .prototype-switcher { bottom: 10px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app" class="variant-root"></main>
+
+    <template id="variant-a">
+      <section class="variant-shell compiler-variant">
+        <header class="page-head">
+          <div>
+            <div class="prototype-label">Framework map · voice-pr</div>
+            <h1>Commentary becomes state, not commands.</h1>
+            <p>
+              A developer speaks naturally while reviewing. Each statement creates,
+              revises, constrains, routes, or cancels an action before the existing
+              agent and GitHub tools execute it.
+            </p>
+          </div>
+          <aside class="head-note">
+            <strong>Try the framework</strong>
+            Select any statement. The compiler readout explains the discourse
+            operation and highlights the action slots it affects.
+          </aside>
+        </header>
+
+        <div class="compiler-grid">
+          <section class="map-panel">
+            <div class="map-panel-head">
+              <h2>01 · Vocal commentary</h2>
+              <span>Temporal stream</span>
+            </div>
+            <div class="utterance-list">
+              <button class="utterance active" data-step="1" data-actions="investigate">
+                <span class="utterance-num">01</span>
+                <blockquote>“Why are we parsing this header twice?”</blockquote>
+                <span class="op-chips"><span class="op-chip">create</span><span class="op-chip">question</span></span>
+              </button>
+              <button class="utterance" data-step="2" data-actions="investigate">
+                <span class="utterance-num">02</span>
+                <blockquote>“Oh—because it can be missing. That explains it.”</blockquote>
+                <span class="op-chips"><span class="op-chip">explain</span><span class="op-chip">resolve</span></span>
+              </button>
+              <button class="utterance" data-step="3" data-actions="change">
+                <span class="utterance-num">03</span>
+                <blockquote>“Still, extract this into a helper.”</blockquote>
+                <span class="op-chips"><span class="op-chip">create</span><span class="op-chip">request</span></span>
+              </button>
+              <button class="utterance" data-step="4" data-actions="change">
+                <span class="utterance-num">04</span>
+                <blockquote>“Don’t change the public behavior, and make it a nit.”</blockquote>
+                <span class="op-chips"><span class="op-chip">constrain</span><span class="op-chip">reclassify</span></span>
+              </button>
+              <button class="utterance" data-step="5" data-actions="follow,route">
+                <span class="utterance-num">05</span>
+                <blockquote>“The other callers can happen later. Tag Dana.”</blockquote>
+                <span class="op-chips"><span class="op-chip">defer</span><span class="op-chip">route</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="compiler-core" aria-label="Commentary compiler">
+            <div class="core-kicker">Commentary compiler</div>
+            <div class="core-node">
+              <strong>Speech act</strong>
+              <span>What is this statement doing?</span>
+            </div>
+            <div class="core-arrow">↓</div>
+            <div class="core-node">
+              <strong>Discourse memory</strong>
+              <span>What earlier action does it modify?</span>
+            </div>
+            <div class="core-arrow">↓</div>
+            <div class="core-node">
+              <strong>Action frame</strong>
+              <span>Outcome · target · owner · timing · force</span>
+            </div>
+            <div class="core-arrow">↓</div>
+            <div class="core-node">
+              <strong>Commitment policy</strong>
+              <span>Observed, requested, or authorized?</span>
+            </div>
+            <div class="compile-readout" aria-live="polite">
+              <b id="readout-label">Create candidate</b>
+              <p id="readout-copy">A question opens an investigation. It does not authorize a code change.</p>
+            </div>
+          </section>
+
+          <section class="map-panel">
+            <div class="map-panel-head">
+              <h2>02 · Structured action slots</h2>
+              <span>Executable state</span>
+            </div>
+            <div class="slot-stack">
+              <article class="action-slot slot-investigate related" data-action-id="investigate">
+                <span class="slot-icon">?</span>
+                <div>
+                  <div class="slot-kind">Investigate</div>
+                  <div class="slot-title">Explain duplicate header parsing</div>
+                  <div class="slot-meta">Target · token.ts:84<br />Evidence · missing header path</div>
+                </div>
+                <span class="slot-state">candidate</span>
+              </article>
+              <article class="action-slot slot-change always-visible" data-action-id="change">
+                <span class="slot-icon">Δ</span>
+                <div>
+                  <div class="slot-kind">Change</div>
+                  <div class="slot-title">Extract parsing into a helper</div>
+                  <div class="slot-meta">Constraint · preserve public behavior<br />Force · non-blocking nit</div>
+                </div>
+                <span class="slot-state">requested</span>
+              </article>
+              <article class="action-slot slot-follow always-visible" data-action-id="follow">
+                <span class="slot-icon">↗</span>
+                <div>
+                  <div class="slot-kind">Follow-up</div>
+                  <div class="slot-title">Migrate remaining callers later</div>
+                  <div class="slot-meta">Timing · after this PR<br />Destination · linked issue</div>
+                </div>
+                <span class="slot-state">draft</span>
+              </article>
+              <article class="action-slot slot-route always-visible" data-action-id="route">
+                <span class="slot-icon">@</span>
+                <div>
+                  <div class="slot-kind">Route</div>
+                  <div class="slot-title">Assign follow-up to Dana</div>
+                  <div class="slot-meta">Owner · @dana<br />Depends on · follow-up created</div>
+                </div>
+                <span class="slot-state">draft</span>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <section class="commitment-strip" aria-label="Action commitment ladder">
+          <div class="commit-state"><b>Observed</b><span>The statement is retained as context.</span></div>
+          <div class="commit-state"><b>Candidate</b><span>The agent may investigate, but not mutate.</span></div>
+          <div class="commit-state"><b>Requested</b><span>A desired outcome has been expressed.</span></div>
+          <div class="commit-state authorized"><b>Authorized</b><span>Dispatch or policy permits side effects.</span></div>
+          <div class="commit-state"><b>Executed</b><span>The existing agent performs the action.</span></div>
+          <div class="commit-state"><b>Verified</b><span>Evidence shows the objective was satisfied.</span></div>
+        </section>
+      </section>
+    </template>
+
+    <template id="variant-b">
+      <section class="variant-shell">
+        <header class="page-head">
+          <div>
+            <div class="prototype-label">In-context simulation · voice-pr</div>
+            <h1>The action tape lives where review already happens.</h1>
+            <p>
+              This variation makes the framework experiential: replay a natural
+              commentary stream and watch it progressively populate executable actions.
+            </p>
+          </div>
+          <aside class="head-note">
+            <strong>Interactive demo</strong>
+            Use “Next statement” in the voice-pr panel. The transcript is not treated
+            as a list of commands; later speech revises earlier state.
+          </aside>
+        </header>
+
+        <div class="github-stage">
+          <div class="gh-top">
+            <span class="gh-mark">⌁</span>
+            <span class="gh-path"><b>acme</b> / checkout</span>
+            <span class="gh-search">Type / to search</span>
+          </div>
+          <header class="pr-head">
+            <h2 class="pr-title">Normalize authorization header handling <span>#241</span></h2>
+            <div class="pr-summary"><span class="pr-open">Open</span> maya wants to merge 4 commits into main from auth/header-normalization</div>
+            <nav class="pr-tabs" aria-label="Pull request navigation">
+              <span class="pr-tab">Conversation</span>
+              <span class="pr-tab">Commits</span>
+              <span class="pr-tab">Checks</span>
+              <span class="pr-tab active">Files changed</span>
+            </nav>
+          </header>
+
+          <div class="pr-body">
+            <div>
+              <section class="diff-file">
+                <header class="diff-head">
+                  <span>▾</span>
+                  <strong>src/auth/token.ts</strong>
+                  <span class="diff-stat"><i></i><i></i><i></i><i></i></span>
+                </header>
+                <div class="code-row"><span class="ln">80</span><span class="ln">80</span><span class="sign"></span><span class="code">export function getToken(request: Request) {</span></div>
+                <div class="code-row"><span class="ln">81</span><span class="ln">81</span><span class="sign"></span><span class="code">  const raw = request.headers.get("authorization");</span></div>
+                <div class="code-row add"><span class="ln"></span><span class="ln">82</span><span class="sign">+</span><span class="code">  if (!raw) return null;</span></div>
+                <div class="code-row add focused"><span class="ln"></span><span class="ln">83</span><span class="sign">+</span><span class="code">  const header = request.headers.get("authorization");</span></div>
+                <div class="code-row add"><span class="ln"></span><span class="ln">84</span><span class="sign">+</span><span class="code">  return header?.replace(/^Bearer\s+/i, "") ?? null;</span></div>
+                <div class="code-row"><span class="ln">82</span><span class="ln">85</span><span class="sign"></span><span class="code">}</span></div>
+                <div class="code-row"><span class="ln">83</span><span class="ln">86</span><span class="sign"></span><span class="code"></span></div>
+                <div class="code-row"><span class="ln">84</span><span class="ln">87</span><span class="sign"></span><span class="code">export function requireToken(request: Request) {</span></div>
+                <div class="code-row"><span class="ln">85</span><span class="ln">88</span><span class="sign"></span><span class="code">  return getToken(request) ?? raiseUnauthorized();</span></div>
+                <div class="code-row"><span class="ln">86</span><span class="ln">89</span><span class="sign"></span><span class="code">}</span></div>
+              </section>
+              <aside class="diff-context">
+                <strong>Current review anchor</strong><br />
+                src/auth/token.ts:83 · selected token <code>authorization</code><br /><br />
+                Voice-pr combines the synchronized anchor with the words. The line is
+                evidence about the referent, not an instruction to edit that exact line.
+              </aside>
+            </div>
+
+            <aside class="voice-panel">
+              <header class="voice-bar">
+                <span class="record-dot">●</span>
+                <span class="voice-brand">voice-pr</span>
+                <span class="voice-time" id="demo-time">recording · 0:04</span>
+              </header>
+              <div class="voice-body">
+                <span class="location-chip">src/auth/token.ts:83 · authorization</span>
+                <div class="tape-label"><span>Commentary stream</span><span id="statement-count">0 / 6</span></div>
+                <div class="spoken-feed" aria-live="polite">
+                  <div class="spoken-line" data-spoken-step="1"><em>0:04</em><span>Why are we parsing this header twice?</span></div>
+                  <div class="spoken-line" data-spoken-step="2"><em>0:08</em><span>Oh, because it can be missing. That explains it.</span></div>
+                  <div class="spoken-line" data-spoken-step="3"><em>0:12</em><span>Still, extract this into a helper.</span></div>
+                  <div class="spoken-line" data-spoken-step="4"><em>0:16</em><span>Don’t change public behavior. Make it a nit.</span></div>
+                  <div class="spoken-line" data-spoken-step="5"><em>0:21</em><span>Actually, cancel the investigation—we answered it.</span></div>
+                  <div class="spoken-line" data-spoken-step="6"><em>0:26</em><span>Move the other callers to a follow-up and tag Dana.</span></div>
+                </div>
+
+                <div class="tape-label"><span>Action tape</span><span class="tape-count" id="action-count">empty</span></div>
+                <div class="action-tape">
+                  <div class="tape-empty">Commentary will create<br />and revise actions here.</div>
+                  <article class="tape-action" data-born="1" data-action="investigation">
+                    <span class="tape-symbol">?</span>
+                    <div><div class="tape-action-type">Investigate</div><div class="tape-action-title">Explain duplicate parsing</div></div>
+                    <span class="tape-action-state">candidate</span>
+                  </article>
+                  <article class="tape-action" data-born="3" data-action="change">
+                    <span class="tape-symbol">Δ</span>
+                    <div><div class="tape-action-type">Change · nit</div><div class="tape-action-title">Extract helper · preserve behavior</div></div>
+                    <span class="tape-action-state">requested</span>
+                  </article>
+                  <article class="tape-action" data-born="6" data-action="follow-up">
+                    <span class="tape-symbol">↗</span>
+                    <div><div class="tape-action-type">Follow-up · @dana</div><div class="tape-action-title">Migrate remaining callers later</div></div>
+                    <span class="tape-action-state">draft</span>
+                  </article>
+                </div>
+
+                <div class="voice-controls">
+                  <button class="next-statement" data-testid="next-statement">Next statement →</button>
+                  <button class="reset-demo" data-testid="reset-demo">Reset</button>
+                </div>
+                <div class="demo-hint">Dispatch authorizes requested actions. Commentary alone does not.</div>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <template id="variant-c">
+      <section class="matrix-variant">
+        <div class="variant-shell">
+          <header class="matrix-head">
+            <div>
+              <div class="prototype-label">Semantic map · voice-pr</div>
+              <h1>A statement changes the action graph.</h1>
+            </div>
+            <p class="matrix-deck">
+              Rows describe what speech does to state. Columns describe the kind of
+              developer action affected. Select a row to inspect its routes.
+            </p>
+          </header>
+
+          <div class="matrix-layout">
+            <div class="matrix-wrap">
+              <div class="matrix" role="table" aria-label="Speech operations by action slots">
+                <div class="matrix-corner">Operation × slot</div>
+                <div class="matrix-col"><b>Change</b><span>code state</span></div>
+                <div class="matrix-col"><b>Investigate</b><span>resolve uncertainty</span></div>
+                <div class="matrix-col"><b>Feedback</b><span>tell the author</span></div>
+                <div class="matrix-col"><b>Follow-up</b><span>later work</span></div>
+                <div class="matrix-col"><b>Route</b><span>find an owner</span></div>
+                <div class="matrix-col"><b>Decision</b><span>retain rationale</span></div>
+                <div class="matrix-col"><b>Gate</b><span>merge readiness</span></div>
+
+                <button class="matrix-row active" data-matrix-row="create" data-example="“Extract this into a helper.”" data-copy="Creates a new action candidate or request. The linguistic force determines whether it is merely observed or actually requested." data-routes="Change,Investigate,Feedback,Follow-up,Decision">
+                  <b>Create</b><span>Open new state</span>
+                </button>
+                <div class="matrix-cell hit focused" data-row="create" data-col="Change" style="--dot:#2c9b59"><small>request</small></div>
+                <div class="matrix-cell hit focused" data-row="create" data-col="Investigate" style="--dot:#c9892b"><small>question</small></div>
+                <div class="matrix-cell hit focused" data-row="create" data-col="Feedback" style="--dot:#245bc7"><small>comment</small></div>
+                <div class="matrix-cell hit focused" data-row="create" data-col="Follow-up" style="--dot:#7852b8"><small>defer</small></div>
+                <div class="matrix-cell focused" data-row="create" data-col="Route"></div>
+                <div class="matrix-cell hit focused" data-row="create" data-col="Decision" style="--dot:#317e78"><small>record</small></div>
+                <div class="matrix-cell focused" data-row="create" data-col="Gate"></div>
+
+                <button class="matrix-row" data-matrix-row="refine" data-example="“Cap it at three attempts.”" data-copy="Fills a missing field on an existing action: acceptance condition, scope, target, owner, or timing." data-routes="Change,Investigate,Feedback,Follow-up,Decision,Gate">
+                  <b>Refine</b><span>Add precision</span>
+                </button>
+                <div class="matrix-cell hit" data-row="refine" data-col="Change" style="--dot:#2c9b59"><small>acceptance</small></div>
+                <div class="matrix-cell hit" data-row="refine" data-col="Investigate" style="--dot:#c9892b"><small>scope</small></div>
+                <div class="matrix-cell hit" data-row="refine" data-col="Feedback" style="--dot:#245bc7"></div>
+                <div class="matrix-cell hit" data-row="refine" data-col="Follow-up" style="--dot:#7852b8"><small>timing</small></div>
+                <div class="matrix-cell" data-row="refine" data-col="Route"></div>
+                <div class="matrix-cell hit" data-row="refine" data-col="Decision" style="--dot:#317e78"></div>
+                <div class="matrix-cell hit" data-row="refine" data-col="Gate" style="--dot:#b33e37"><small>evidence</small></div>
+
+                <button class="matrix-row" data-matrix-row="constrain" data-example="“Don’t change the public API.”" data-copy="Adds a boundary that every later execution must preserve. Constraints can apply to one action or the entire session." data-routes="Change,Investigate,Feedback,Follow-up,Decision,Gate">
+                  <b>Constrain</b><span>Narrow allowed outcomes</span>
+                </button>
+                <div class="matrix-cell hit" data-row="constrain" data-col="Change" style="--dot:#2c9b59"><small>boundary</small></div>
+                <div class="matrix-cell hit" data-row="constrain" data-col="Investigate" style="--dot:#c9892b"></div>
+                <div class="matrix-cell hit" data-row="constrain" data-col="Feedback" style="--dot:#245bc7"><small>tone</small></div>
+                <div class="matrix-cell hit" data-row="constrain" data-col="Follow-up" style="--dot:#7852b8"><small>scope</small></div>
+                <div class="matrix-cell" data-row="constrain" data-col="Route"></div>
+                <div class="matrix-cell hit" data-row="constrain" data-col="Decision" style="--dot:#317e78"></div>
+                <div class="matrix-cell hit" data-row="constrain" data-col="Gate" style="--dot:#b33e37"><small>policy</small></div>
+
+                <button class="matrix-row" data-matrix-row="reclassify" data-example="“Make that a non-blocking comment.”" data-copy="Changes disposition without changing the underlying concern: execute versus propose, blocking versus advisory, public versus private." data-routes="Change,Investigate,Feedback,Follow-up,Gate">
+                  <b>Reclassify</b><span>Change disposition</span>
+                </button>
+                <div class="matrix-cell hit" data-row="reclassify" data-col="Change" style="--dot:#2c9b59"><small>propose</small></div>
+                <div class="matrix-cell hit" data-row="reclassify" data-col="Investigate" style="--dot:#c9892b"><small>private</small></div>
+                <div class="matrix-cell hit" data-row="reclassify" data-col="Feedback" style="--dot:#245bc7"><small>public</small></div>
+                <div class="matrix-cell hit" data-row="reclassify" data-col="Follow-up" style="--dot:#7852b8"><small>later</small></div>
+                <div class="matrix-cell" data-row="reclassify" data-col="Route"></div>
+                <div class="matrix-cell" data-row="reclassify" data-col="Decision"></div>
+                <div class="matrix-cell hit" data-row="reclassify" data-col="Gate" style="--dot:#b33e37"><small>nit</small></div>
+
+                <button class="matrix-row" data-matrix-row="cancel" data-example="“Actually, leave that alone.”" data-copy="Closes or suppresses an action while retaining its provenance. Cancellation is a first-class result, not a transcript deletion." data-routes="Change,Investigate,Feedback,Follow-up,Route,Gate">
+                  <b>Cancel</b><span>Close existing state</span>
+                </button>
+                <div class="matrix-cell hit" data-row="cancel" data-col="Change" style="--dot:#2c9b59"></div>
+                <div class="matrix-cell hit" data-row="cancel" data-col="Investigate" style="--dot:#c9892b"></div>
+                <div class="matrix-cell hit" data-row="cancel" data-col="Feedback" style="--dot:#245bc7"></div>
+                <div class="matrix-cell hit" data-row="cancel" data-col="Follow-up" style="--dot:#7852b8"></div>
+                <div class="matrix-cell hit" data-row="cancel" data-col="Route" style="--dot:#317e78"></div>
+                <div class="matrix-cell" data-row="cancel" data-col="Decision"></div>
+                <div class="matrix-cell hit" data-row="cancel" data-col="Gate" style="--dot:#b33e37"></div>
+
+                <button class="matrix-row" data-matrix-row="context" data-example="“We had an outage here last quarter.”" data-copy="Contributes rationale or evidence to another action without independently authorizing work. Context makes execution better but remains non-imperative." data-routes="Change,Investigate,Feedback,Follow-up,Route,Decision,Gate">
+                  <b>Context</b><span>Attach evidence</span>
+                </button>
+                <div class="matrix-cell hit" data-row="context" data-col="Change" style="--dot:#2c9b59"><small>why</small></div>
+                <div class="matrix-cell hit" data-row="context" data-col="Investigate" style="--dot:#c9892b"></div>
+                <div class="matrix-cell hit" data-row="context" data-col="Feedback" style="--dot:#245bc7"></div>
+                <div class="matrix-cell hit" data-row="context" data-col="Follow-up" style="--dot:#7852b8"></div>
+                <div class="matrix-cell hit" data-row="context" data-col="Route" style="--dot:#317e78"></div>
+                <div class="matrix-cell hit" data-row="context" data-col="Decision" style="--dot:#317e78"><small>rationale</small></div>
+                <div class="matrix-cell hit" data-row="context" data-col="Gate" style="--dot:#b33e37"><small>risk</small></div>
+              </div>
+            </div>
+
+            <aside class="matrix-inspector" aria-live="polite">
+              <div class="inspector-index" id="inspector-index">Operation 01 · Create</div>
+              <h2 id="inspector-title">Open new executable state.</h2>
+              <p id="inspector-copy">Creates a new action candidate or request. The linguistic force determines whether it is merely observed or actually requested.</p>
+              <div class="inspector-example" id="inspector-example">“Extract this into a helper.”</div>
+              <div class="inspector-routes" id="inspector-routes">
+                <span>Change</span><span>Investigate</span><span>Feedback</span><span>Follow-up</span><span>Decision</span>
+              </div>
+            </aside>
+          </div>
+
+          <footer class="matrix-principle">
+            <b>Framework principle</b>
+            <p>Statements are many-to-many: several statements can construct one action, and one statement can alter several actions.</p>
+          </footer>
+        </div>
+      </section>
+    </template>
+
+    <div class="prototype-switcher" role="navigation" aria-label="Prototype variants">
+      <button id="previous-variant" aria-label="Previous variant">←</button>
+      <div class="switcher-copy">
+        <strong id="variant-name">A — Compiler map</strong>
+        <span>← → keys · shareable ?variant=</span>
+      </div>
+      <button id="next-variant" aria-label="Next variant">→</button>
+    </div>
+
+    <script>
+      (function () {
+        var variants = {
+          A: { name: "Compiler map", template: "variant-a" },
+          B: { name: "In-GitHub action tape", template: "variant-b" },
+          C: { name: "Operation × slot matrix", template: "variant-c" }
+        };
+        var order = Object.keys(variants);
+        var current = "A";
+        var demoStep = 0;
+
+        function normalizedVariant() {
+          var requested = new URLSearchParams(location.search).get("variant");
+          return variants[requested] ? requested : "A";
+        }
+
+        function render() {
+          current = normalizedVariant();
+          demoStep = 0;
+          var app = document.getElementById("app");
+          var template = document.getElementById(variants[current].template);
+          app.replaceChildren(template.content.cloneNode(true));
+          document.getElementById("variant-name").textContent = current + " — " + variants[current].name;
+          document.title = "voice-pr · " + variants[current].name;
+          wireVariant();
+        }
+
+        function setVariant(next) {
+          var params = new URLSearchParams(location.search);
+          params.set("variant", next);
+          history.replaceState({}, "", location.pathname + "?" + params.toString());
+          render();
+        }
+
+        function cycle(delta) {
+          var index = order.indexOf(current);
+          setVariant(order[(index + delta + order.length) % order.length]);
+        }
+
+        function wireVariant() {
+          if (current === "A") wireCompilerMap();
+          if (current === "B") wireActionTape();
+          if (current === "C") wireMatrix();
+        }
+
+        function wireCompilerMap() {
+          var descriptions = {
+            "1": ["Create candidate", "A question opens an investigation. It does not authorize a code change."],
+            "2": ["Resolve with context", "New commentary answers the question and becomes rationale. The candidate may now be closed."],
+            "3": ["Create request", "A directive opens a Change slot with the selected line as evidence about its target."],
+            "4": ["Constrain + reclassify", "One statement narrows the allowed outcome and changes the request from blocking to advisory."],
+            "5": ["Defer + route", "One statement creates a later action and assigns its ownership. It fans out across two slots."]
+          };
+          var utterances = document.querySelectorAll(".utterance");
+          utterances.forEach(function (button) {
+            button.addEventListener("click", function () {
+              utterances.forEach(function (item) { item.classList.remove("active"); });
+              button.classList.add("active");
+              var actions = button.dataset.actions.split(",");
+              document.querySelectorAll(".action-slot").forEach(function (slot) {
+                slot.classList.toggle("related", actions.indexOf(slot.dataset.actionId) >= 0);
+              });
+              var detail = descriptions[button.dataset.step];
+              document.getElementById("readout-label").textContent = detail[0];
+              document.getElementById("readout-copy").textContent = detail[1];
+            });
+          });
+        }
+
+        function wireActionTape() {
+          var next = document.querySelector("[data-testid=next-statement]");
+          var reset = document.querySelector("[data-testid=reset-demo]");
+          next.addEventListener("click", advanceDemo);
+          reset.addEventListener("click", resetDemo);
+          paintDemo();
+        }
+
+        function advanceDemo() {
+          if (demoStep < 6) demoStep += 1;
+          else demoStep = 0;
+          paintDemo();
+        }
+
+        function resetDemo() {
+          demoStep = 0;
+          paintDemo();
+        }
+
+        function paintDemo() {
+          var spoken = document.querySelectorAll("[data-spoken-step]");
+          var actions = document.querySelectorAll("[data-born]");
+          var visibleActions = 0;
+          spoken.forEach(function (line) {
+            var step = Number(line.dataset.spokenStep);
+            line.classList.toggle("visible", step <= demoStep);
+            line.classList.toggle("latest", step === demoStep);
+          });
+          actions.forEach(function (action) {
+            var born = Number(action.dataset.born);
+            var visible = born <= demoStep;
+            action.classList.toggle("visible", visible);
+            action.classList.toggle("cancelled", action.dataset.action === "investigation" && demoStep >= 5);
+            if (visible && !(action.dataset.action === "investigation" && demoStep >= 5)) visibleActions += 1;
+            if (action.dataset.action === "change") {
+              action.querySelector(".tape-action-type").textContent = demoStep >= 4 ? "Change · nit" : "Change";
+              action.querySelector(".tape-action-title").textContent = demoStep >= 4 ? "Extract helper · preserve behavior" : "Extract parsing into helper";
+            }
+            if (action.dataset.action === "investigation") {
+              action.querySelector(".tape-action-state").textContent = demoStep >= 5 ? "cancelled" : "candidate";
+            }
+          });
+          var empty = document.querySelector(".tape-empty");
+          if (empty) empty.style.display = demoStep === 0 ? "grid" : "none";
+          var count = document.getElementById("statement-count");
+          var actionCount = document.getElementById("action-count");
+          var time = document.getElementById("demo-time");
+          var button = document.querySelector("[data-testid=next-statement]");
+          if (count) count.textContent = demoStep + " / 6";
+          if (actionCount) actionCount.textContent = visibleActions ? visibleActions + " active" : "empty";
+          if (time) time.textContent = "recording · 0:" + String(4 + demoStep * 4).padStart(2, "0");
+          if (button) button.textContent = demoStep === 6 ? "Replay commentary ↻" : "Next statement →";
+        }
+
+        function wireMatrix() {
+          var rows = document.querySelectorAll("[data-matrix-row]");
+          rows.forEach(function (row, index) {
+            row.addEventListener("click", function () {
+              rows.forEach(function (item) { item.classList.remove("active"); });
+              row.classList.add("active");
+              document.querySelectorAll(".matrix-cell").forEach(function (cell) {
+                var focused = cell.dataset.row === row.dataset.matrixRow;
+                cell.classList.toggle("focused", focused);
+                cell.classList.toggle("dimmed", !focused);
+              });
+              document.getElementById("inspector-index").textContent =
+                "Operation " + String(index + 1).padStart(2, "0") + " · " + row.querySelector("b").textContent;
+              document.getElementById("inspector-title").textContent =
+                row.querySelector("span").textContent + ".";
+              document.getElementById("inspector-copy").textContent = row.dataset.copy;
+              document.getElementById("inspector-example").textContent = row.dataset.example;
+              var routes = document.getElementById("inspector-routes");
+              routes.replaceChildren();
+              row.dataset.routes.split(",").forEach(function (route) {
+                var chip = document.createElement("span");
+                chip.textContent = route;
+                routes.appendChild(chip);
+              });
+            });
+          });
+        }
+
+        document.getElementById("previous-variant").addEventListener("click", function () { cycle(-1); });
+        document.getElementById("next-variant").addEventListener("click", function () { cycle(1); });
+        window.addEventListener("keydown", function (event) {
+          var tag = event.target && event.target.tagName;
+          if (tag === "INPUT" || tag === "TEXTAREA" || (event.target && event.target.isContentEditable)) return;
+          if (event.key === "ArrowLeft") cycle(-1);
+          if (event.key === "ArrowRight") cycle(1);
+        });
+        window.addEventListener("popstate", render);
+        render();
+      })();
+    </script>
+  </body>
+</html>

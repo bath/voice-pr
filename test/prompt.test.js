@@ -59,7 +59,8 @@ test("single hot turn interprets fuzzy speech, confidence-gates, edits, tests, a
     [{ text: "make this less weird", file: "a.js", line: 1 }],
     { jiraKey: "ABC-123", checksSummary: "5 checks, 1 failing" }
   );
-  assert.match(body, /translate each fuzzy spoken comment into an actionable/);
+  assert.match(body, /compile the complete commentary into open-ended desired outcomes/);
+  assert.match(body, /record_action_plan/);
   assert.match(body, /HIGH confidence/);
   assert.match(body, /LOW confidence/);
   assert.match(body, /one\s+coherent commit/);

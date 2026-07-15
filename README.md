@@ -9,28 +9,78 @@ and commits; the bridge pushes to the PR branch.
 
 ## Pipeline
 
-```text
-Chrome extension
-  PR page loads ──► POST /api/prepare
-                    resolve + cache PR, Jira key, and CI
-                    clone/fetch mirror + prepare PR-head worktree
-                    no microphone, Cursor agent, or inference
+```mermaid
+flowchart LR
+    speech["Speech + PR-page attention"]
+    capture["Audio + anchor timeline"]
+    utterances["Anchored Utterances"]
+    plan["Validated Action Plan"]
+    envelope{"Authorization Envelope"}
+    work["Authorized edits + validation + commit"]
+    publish["Harness push + remote-head verification"]
+    landed["Commit on the PR head"]
 
-  record starts ──► POST /api/warm
-                    lease the prepared worktree
-                    create an idle Cursor SDK agent; no inference
+    pr[("GitHub PR context")]
+    history[("User-local Action history")]
+    scope["User-selected scope"]
+    receipts[("Effect receipts")]
 
-  record stops  ──► POST /api/dispatch
-                    local Whisper transcription
-                    timestamp → file:line anchoring
-                    one focused agent turn interprets + edits + tests
-                    commit + push to PR head
-                    bridge posts intent-trail comment asynchronously
+    speech --> capture
+    capture -->|"local Whisper + timestamp anchoring"| utterances
+    pr --> utterances
+    utterances -->|"single inference turn"| plan
+    history --> plan
+    plan --> envelope
+    scope --> envelope
+    envelope -->|"authorized Effects only"| work
+    work --> publish
+    publish --> landed
+
+    plan -. append Operations / Actions / Effects .-> history
+    publish -. record completed Effects .-> receipts
 ```
+
+The [end-to-end data flow](docs/data-flow.md) expands this path across the
+extension, local bridge, Cursor agent, local stores, and GitHub—including the
+page-load preparation and record-start warm paths that happen before Dispatch.
 
 There is no orchestrator, work-item queue, mayor, polecat, refinery, or direct
 LLM call. Page load prepares deterministic context, record start pays only agent
 setup, and record stop sends the anchored speech for a single inference turn.
+
+## Voice Action framework
+
+The warmed agent must register a typed Action Plan before publication. Actions
+describe independently resolvable outcomes; Effects describe the existing tools
+used to realize them. The local harness validates every Effect against the user's
+configured scope, owns authenticated publication, and refuses to push when the
+agent skips compilation.
+
+The extension defaults to the current behavior: voice-pr may edit, test, commit,
+push to the current PR, and post the intent trail. A visible, labelled Scope
+control can narrow or expand the effective envelope from read-only through
+connected services. Scope is reset for every recording session; broader access
+is explicitly labelled and never silently becomes a later session's default.
+Spoken commentary can narrow that scope, but never expand it.
+
+Action history, Operation provenance, Effect receipts, transcripts, and raw audio
+remain user-local. GitHub remains the collaboration surface; successful runs show
+only a compact Action summary, while permission and clarification exceptions are
+surfaced explicitly.
+
+### Demo
+
+![Action framework end-to-end states](docs/screenshots/action-framework-demo.png)
+
+![Authorization scope configuration](docs/screenshots/action-framework-permission.png)
+
+Run the interactive gallery locally with `npm run demo:action-framework`, then
+open `http://127.0.0.1:4173/scripts/action-framework-gallery.html`.
+
+The throwaway reimagining prototype lives at
+`http://127.0.0.1:4173/scripts/action-framework-reimagined.html?variant=A`.
+Use the floating arrows (or the keyboard arrow keys) to compare variants A–C;
+the small state control exercises idle, working, success, and blocked.
 
 ## Success metric
 
@@ -151,6 +201,7 @@ worktree is verified before push. It never force-pushes, rebases, or amends.
 | `VOICE_PR_WHISPER_BIN` | `whisper-cli` | whisper.cpp binary |
 | `VOICE_PR_WHISPER_MODEL` | `~/.cache/whisper/ggml-large-v3-turbo-q5_0.bin` | Model |
 | `VOICE_PR_ARCHIVE_DIR` | `~/.voice-pr/sessions` | Audio, transcripts, results, traces |
+| `VOICE_PR_ACTION_STORE_DIR` | `~/.voice-pr/actions` | User-local Action projections, Operations, and Effect receipts |
 
 ## Validation and diagnostics
 
